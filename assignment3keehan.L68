@@ -1,0 +1,2331 @@
+00001000 Starting Address
+Assembler used: EASy68K Editor/Assembler v5.16.01
+Created On: 11/24/2021 10:45:20 PM
+
+00000000                             1  *-----------------------------------------------------------
+00000000                             2  * Title      : Interactive Assembly Project: BroCmon
+00000000                             3  * Written by : Andrew Keehan
+00000000                             4  * Date       : 9/27/21
+00000000                             5  * Description: This program runs BroCmon, the game
+00000000                             6  *-----------------------------------------------------------
+00000000                             7  * trap codes
+00000000  =0000005C                  8  DRAWING_MODE            EQU 92
+00000000  =00000011                  9  DOUBLE_BUFFERED_MODE    EQU 17
+00000000  =00000017                 10  DELAY_FRAME             EQU 23
+00000000  =0000005E                 11  REPAINT_SCREEN          EQU 94
+00000000  =0000000B                 12  CLEAR_SCREEN            EQU 11
+00000000  =0000FF00                 13  CLEAR_SCREEN_MAGIC_VAL  EQU $FF00
+00000000  =00000013                 14  KEY_STATE               EQU 19
+00000000                            15  
+00000000                            16  * miscellaneous
+00000000  =00000001                 17  FRAME_DELAY_TIME        EQU 1
+00000000                            18  ALL_REG                 REG d0-d7/a0-a6
+00000000  =0000000D                 19  ENTER                   EQU $D
+00000000                            20  
+00000000                            21  * screen dimensions
+00000000  =00000280                 22  SCREEN_WIDTH            EQU 640
+00000000  =000001E0                 23  SCREEN_HEIGHT           EQU 480
+00000000                            24  
+00000000                            25  * player attributes
+00000000  =00000020                 26  PLAYER_WIDTH            EQU 32
+00000000  =00000020                 27  PLAYER_HEIGHT           EQU 32
+00000000  =00000064                 28  PLAYER_START_X          EQU 100
+00000000  =0000017C                 29  PLAYER_START_Y          EQU 380
+00000000  =00000002                 30  PLAYER_VELOCITY         EQU $2
+00000000                            31  
+00000000                            32  * brocmon attributes
+00000000  =00000020                 33  PROJ_WIDTH              EQU 32
+00000000  =00000020                 34  PROJ_HEIGHT             EQU 32
+00000000  =00000014                 35  DAMAGE_N                EQU 20
+00000000  =0000001E                 36  DAMAGE_A                EQU 30
+00000000  =0000000A                 37  DAMAGE_D                EQU 10
+00000000  =0000001E                 38  HEALTH                  EQU 30
+00000000                            39  *-----------------------------------------------------------
+00000000                            40          
+00001000                            41  START   ORG     $1000      
+00001000                            42       
+00001000                            43          * set double buffered mode
+00001000  705C                      44          move.l  #DRAWING_MODE,d0
+00001002  7211                      45          move.l  #DOUBLE_BUFFERED_MODE,d1
+00001004  4E4F                      46          trap    #15
+00001006                            47          
+00001006                            48  gameStart:        
+00001006                            49          * draw loading and logo icons, then wait for player to enter
+00001006  4EB9 00001CBE             50          jsr     drawLoad
+0000100C  4EB9 00001CDE             51          jsr     drawLogo
+00001012  4EB9 00001C4C             52          jsr     enterLoop
+00001018                            53          
+00001018                            54          * have player choose a starting BroCmon
+00001018  4EB9 00001148             55          jsr     chooseStarter
+0000101E                            56  
+0000101E                            57  init:        
+0000101E                            58          * load the outside scene, which includes player sprite
+0000101E  4EB9 00001CBE             59          jsr     drawLoad
+00001024  4EB9 00001CA4             60          jsr     initOutside
+0000102A                            61  
+0000102A                            62  outsideLoop:
+0000102A                            63  * the loop for walking on the island and encountering BroCmon in grass       
+0000102A                            64  
+0000102A                            65          * redraw background chunk where player used to be
+0000102A  4EB9 00001886             66          jsr     redrawIslandChunk     
+00001030                            67        
+00001030                            68          * get player input, then update player location        
+00001030  4EB9 00001824             69          jsr     updatePlayer
+00001036                            70          * draw player
+00001036  4EB9 00001D34             71          jsr     drawPlayer
+0000103C  4EB9 00001C16             72          jsr     swapBuffers
+00001042                            73       
+00001042                            74          * check for grass collision, change scenes if needed
+00001042  4EB9 00001896             75          jsr     encounter        
+00001048                            76          
+00001048                            77          * check to see if we had a fight, if so reload this scene
+00001048  BCBC 00000001             78          cmp.l   #1,d6
+0000104E  67CE                      79          beq     init
+00001050                            80     
+00001050                            81          * check to see if all BroCmon have been obtained
+00001050                            82          * if not keep doing outside loop
+00001050  4EB9 00001C58             83          jsr     checkInventory
+00001056  BEBC 00000001             84          cmp.l   #1,d7
+0000105C  66CC                      85          bne     outsideLoop
+0000105E                            86          
+0000105E                            87          * show the winner screen
+0000105E  4EB9 00001C82             88          jsr     winScreen          
+00001064                            89                  
+00001064                            90  *-----------------------------------------------------------
+00001064                            91  *                       SUBROUTINES
+00001064                            92  *-----------------------------------------------------------
+00001064                            93  
+00001064                            94          * file includes        
+00001064                            95          INCLUDE     "DrawWholeBitmap.X68"
+00001064  =00000050                 96  PEN_COLOR               EQU     80
+00001064  =00000052                 97  DRAW_PIXEL              EQU     82
+00001064                            98  SAVED_REG               REG     d0-d1/d4-d7/a2-a6
+00001064                            99  drawWholeBMP:
+00001064                           100  
+00001064                           101          * save off anything that isn't an input
+00001064  43F9 00001D9C            102          lea     bmpSave,a1
+0000106A  48D1 7CF3                103          movem.l SAVED_REG,(a1)
+0000106E                           104  
+0000106E                           105          * get header size
+0000106E  D1FC 0000000E            106          add.l   #14,a0      ; get to DIB header size  
+00001074  2018                     107          move.l  (a0)+,d0    ; get DIB header size
+00001076  4840                     108          swap    d0          ; swap
+00001078  E058                     109          ror.w   #8,d0       ; roll right
+0000107A                           110          
+0000107A                           111          * get image width
+0000107A  2818                     112          move.l  (a0)+,d4    ; get the image width
+0000107C  4844                     113          swap    d4          ; swap
+0000107E  E05C                     114          ror.w   #8,d4       ; roll right
+00001080                           115          
+00001080                           116          * get image height
+00001080  2A18                     117          move.l  (a0)+,d5    ; get the image height
+00001082  4845                     118          swap    d5          ; swap
+00001084  E05D                     119          ror.w   #8,d5       ; roll right
+00001086                           120          
+00001086  0480 0000000C            121          subi.l  #12,d0      ; subtract 12bytes from header size
+0000108C  D1C0                     122          add.l   d0,a0       ; advance to start of pixel data
+0000108E                           123          
+0000108E  4286                     124          clr.l   d6          ; clear out column counter
+00001090  4EB9 00001098            125          jsr     draw24Loop  ; begin drawing pixel data
+00001096  4E75                     126          rts      
+00001098                           127          
+00001098                           128  draw24Loop:
+00001098                           129  
+00001098                           130          * get and set pen color
+00001098  4281                     131          clr.l   d1          ; clear out RGB register
+0000109A  1218                     132          move.b  (a0)+,d1    ; get B value
+0000109C  E189                     133          lsl.l   #8,d1       ; bit shift left
+0000109E  1218                     134          move.b  (a0)+,d1    ; get G value
+000010A0  E189                     135          lsl.l   #8,d1       ; bit shift left
+000010A2  1218                     136          move.b  (a0)+,d1    ; get R value
+000010A4  7050                     137          move.l  #PEN_COLOR,d0
+000010A6  4E4F                     138          trap    #15         ; set pen color
+000010A8                           139          
+000010A8                           140          * get output location then draw
+000010A8  0C81 0000F2FF            141          cmpi.l  #$0000F2FF,d1   ; compare to green screen color
+000010AE  6700 000C                142          beq     greenScreen ; don't draw if it's the green screen        
+000010B2  4281                     143          clr.l   d1
+000010B4  D283                     144          add.l   d3,d1       ; add in bottom left X on screen
+000010B6  D286                     145          add.l   d6,d1       ; add in column counter
+000010B8  7052                     146          move.l  #DRAW_PIXEL,d0
+000010BA  4E4F                     147          trap    #15         ; draw pixel
+000010BC                           148  greenScreen:
+000010BC                           149          
+000010BC                           150          * check if done with row, branch if not
+000010BC  5286                     151          add.l   #1,d6       ; increment column counter
+000010BE  B886                     152          cmp.l   d6,d4       ; compare column counter to image width
+000010C0  66D6                     153          bne     draw24Loop
+000010C2                           154          
+000010C2                           155          * reset X output, adjust Y output
+000010C2  4286                     156          clr.l   d6          ; clear column counter
+000010C4  5382                     157          subi.l  #1,d2       ; subtract 1 from bottom left Y on screen
+000010C6                           158          
+000010C6                           159          * check if done with image, branch if not
+000010C6  5385                     160          subi.l  #1,d5       ; subtract 1 from image height
+000010C8  66CE                     161          bne     draw24Loop  ; branch if we didn't hit 0
+000010CA                           162  
+000010CA                           163          * move register saves back in
+000010CA  4CD1 7CF3                164          movem.l (a1),SAVED_REG
+000010CE  4E75                     165          rts
+000010D0                           166  
+000010D0                           167  
+000010D0                           168  
+000010D0                           169  
+000010D0                           170  
+000010D0                           171  
+000010D0                           172  
+000010D0                           173  
+000010D0                           174  
+000010D0                           175  
+000010D0                           176  
+000010D0                           177  
+000010D0                           178  
+000010D0                           179  
+000010D0                           180  
+000010D0                           181  
+000010D0                           182  
+000010D0                           183  
+000010D0                           184  
+000010D0                           185  
+000010D0                           186  
+000010D0                           187  
+000010D0                           188  
+000010D0                           189  
+000010D0                           190  
+000010D0                           191  
+000010D0                           192  
+000010D0                           193  
+000010D0                           194  
+000010D0                           195  
+000010D0                           196  -------------------- end include --------------------
+000010D0                           197          INCLUDE     "DrawBitmapChunk.X68"
+000010D0                           198  SAVED_CHUNK_REG                 REG     d0-d3
+000010D0                           199  drawBMPchunk:
+000010D0                           200  
+000010D0                           201          * save off anything that isn't an input
+000010D0  43F9 00001DC8            202          lea     chunkSave,a1
+000010D6  48D1 7CF3                203          movem.l SAVED_REG,(a1)        
+000010DA                           204          
+000010DA                           205          * get header size
+000010DA  D1FC 0000000E            206          add.l   #14,a0      ; get to DIB header size        
+000010E0  2018                     207          move.l  (a0)+,d0    ; get DIB header size
+000010E2  4840                     208          swap    d0          ; swap
+000010E4  E058                     209          ror.w   #8,d0       ; roll right
+000010E6                           210          
+000010E6                           211          * move to pixel data
+000010E6  5980                     212          subi.l  #4,d0       ; subtract 4 bytes from header size
+000010E8  D1C0                     213          add.l   d0,a0       ; advance to start of pixel data      
+000010EA                           214  
+000010EA                           215          * get num rows to chunk
+000010EA  203C 000001E0            216          move.l  #SCREEN_HEIGHT,d0        
+000010F0  9087                     217          sub.l   d7,d0       ; subtract chunk bottom left Y from img height
+000010F2                           218          
+000010F2                           219          * multiply result by image width
+000010F2  C0FC 0280                220          mulu    #SCREEN_WIDTH,d0 
+000010F6  2200                     221          move.l  d0,d1       ; save off result so we can add it twice more
+000010F8  D081                     222          add.l   d1,d0       ; add it two times (to account for RGB)
+000010FA  D081                     223          add.l   d1,d0
+000010FC                           224          
+000010FC                           225          * move to data row for chunk pixel data        
+000010FC  D1C0                     226          add.l   d0,a0
+000010FE                           227          
+000010FE                           228          * adjust for X coord of chunk
+000010FE  D1C6                     229          add.l   d6,a0       ; add bottom left X of chunk to pointer
+00001100  D1C6                     230          add.l   d6,a0
+00001102  D1C6                     231          add.l   d6,a0
+00001104                           232          * a0 is now at start of chunk data
+00001104                           233          
+00001104                           234          * set row output and column counter
+00001104  2407                     235          move.l  d7,d2       ; move bottom left Y on screen into row output
+00001106  4283                     236          clr.l   d3          ; set column counter to 0        
+00001108                           237  
+00001108                           238  displayLoop:
+00001108                           239  
+00001108                           240          * get and set pen color
+00001108  4281                     241          clr.l   d1          ; clear out RGB register
+0000110A  1218                     242          move.b  (a0)+,d1    ; get B value
+0000110C  E189                     243          lsl.l   #8,d1       ; bit shift left
+0000110E  1218                     244          move.b  (a0)+,d1    ; get G value
+00001110  E189                     245          lsl.l   #8,d1       ; bit shift left
+00001112  1218                     246          move.b  (a0)+,d1    ; get R value
+00001114  7050                     247          move.l  #PEN_COLOR,d0
+00001116  4E4F                     248          trap    #15         ; set pen color
+00001118                           249          
+00001118                           250          * get output location then draw
+00001118  4281                     251          clr.l   d1
+0000111A  D286                     252          add.l   d6,d1       ; add in bottom left X on screen
+0000111C  D283                     253          add.l   d3,d1       ; add in column counter
+0000111E  7052                     254          move.l  #DRAW_PIXEL,d0
+00001120  4E4F                     255          trap    #15         ; draw pixel
+00001122                           256          
+00001122                           257          * check if done with row, branch if not
+00001122  5283                     258          add.l   #1,d3       ; increment column counter
+00001124  B883                     259          cmp.l   d3,d4       ; compare column counter to chunk width
+00001126  66E0                     260          bne     displayLoop
+00001128                           261          
+00001128                           262          * reset column counter
+00001128  4283                     263          clr.l   d3          ; set column counter to 0
+0000112A                           264          
+0000112A                           265          * move the data pointer to the next chunk row
+0000112A  223C 00000280            266          move.l  #SCREEN_WIDTH,d1    ; get image width
+00001130  9284                     267          sub.l   d4,d1       ; subtract chunk width
+00001132  D1C1                     268          add.l   d1,a0       ; add to data pointer 3 times for RGB
+00001134  D1C1                     269          add.l   d1,a0
+00001136  D1C1                     270          add.l   d1,a0
+00001138                           271          
+00001138                           272          * check if done with image, branch if not
+00001138  5382                     273          subi.l  #1,d2       ; decrement the row output
+0000113A  2007                     274          move.l  d7,d0       ; get bottom edge
+0000113C  9085                     275          sub.l   d5,d0       ; subtract chunk height
+0000113E  B082                     276          cmp.l   d2,d0       ; compare row output to top edge
+00001140  66C6                     277          bne     displayLoop
+00001142                           278          
+00001142                           279          * move register saves back in
+00001142  4CD1 000F                280          movem.l (a1),SAVED_CHUNK_REG
+00001146  4E75                     281          rts
+00001148                           282  
+00001148                           283  
+00001148                           284  
+00001148                           285  
+00001148                           286  
+00001148                           287  
+00001148                           288  
+00001148                           289  
+00001148                           290  
+00001148                           291  
+00001148                           292  
+00001148                           293  
+00001148                           294  
+00001148                           295  
+00001148                           296  
+00001148                           297  
+00001148                           298  
+00001148                           299  
+00001148                           300  
+00001148                           301  
+00001148                           302  
+00001148                           303  
+00001148                           304  
+00001148                           305  
+00001148                           306  
+00001148                           307  
+00001148                           308  
+00001148                           309  
+00001148                           310  
+00001148                           311  
+00001148                           312  -------------------- end include --------------------
+00001148                           313          INCLUDE     "BroCmonOptions.X68"
+00001148  =00000025                314  LEFT_ARROW              EQU     $25
+00001148  =00000026                315  UP_ARROW                EQU     $26
+00001148  =00000027                316  RIGHT_ARROW             EQU     $27
+00001148  =00000028                317  DOWN_ARROW              EQU     $28
+00001148                           318  chooseStarter:
+00001148  4EB9 00001C0A            319          jsr     clearScreen
+0000114E  4EB9 0000127E            320          jsr     drawFoption
+00001154  4EB9 00001296            321          jsr     drawGoption
+0000115A  4EB9 000012AE            322          jsr     drawWoption
+00001160  4EB9 00001C16            323          jsr     swapBuffers
+00001166                           324          
+00001166  4EB9 000011FC            325          jsr     selection      
+0000116C  4E75                     326          rts
+0000116E                           327  chooseFighter:
+0000116E                           328          
+0000116E  4EB9 00001C0A            329          jsr     clearScreen
+00001174                           330          
+00001174  41F9 0001A66A            331          lea     choose,a0
+0000117A  263C 000000AA            332          move.l  #170,d3     ; bottom left X on screen
+00001180  243C 00000096            333          move.l  #150,d2     ; bottom left Y on screen        
+00001186  4EB8 1064                334          jsr     drawWholeBMP    ; draw the image
+0000118A                           335          
+0000118A                           336          * check player inventory to see which BroCmon they have
+0000118A                           337          * then print the ones they have to screen
+0000118A  41F9 00001D48            338          lea     inventory,a0
+00001190  2810                     339          move.l  (a0),d4
+00001192  0804 0018                340          btst    #24,d4
+00001196  6700 0008                341          beq     noF         ; branch ahead if they dont have fire
+0000119A  4EB9 0000127E            342          jsr     drawFoption
+000011A0                           343  noF:    
+000011A0  0804 0010                344          btst    #16,d4        
+000011A4  6700 0008                345          beq     noG         ; branch ahead if they dont have grass
+000011A8  4EB9 00001296            346          jsr     drawGoption
+000011AE                           347  noG:
+000011AE  0804 0008                348          btst    #8,d4
+000011B2  6700 0008                349          beq     noW         ; branch ahead if they dont have water
+000011B6  4EB9 000012AE            350          jsr     drawWoption
+000011BC                           351  noW:
+000011BC  4EB9 00001C16            352          jsr     swapBuffers
+000011C2                           353          
+000011C2                           354  fighterLoop:
+000011C2                           355          * now loop to get player choice
+000011C2  4EB9 00001C2E            356          jsr     checkKeyPress
+000011C8  0801 0018                357          btst.l  #24,d1      ; check for left arrow
+000011CC  6600 001A                358          bne     Ffighter
+000011D0  0801 0010                359          btst.l  #16,d1      ; check for right arrow
+000011D4  6600 001C                360          bne     Wfighter
+000011D8  0801 0008                361          btst.l  #8,d1       ; check for up arrow
+000011DC  67E4                     362          beq     fighterLoop  
+000011DE                           363          
+000011DE                           364  Gfighter:
+000011DE  0804 0010                365          btst    #16,d4      ; inventory still in d4       
+000011E2  67DE                     366          beq     fighterLoop
+000011E4                           367          
+000011E4                           368          * if they do have it, set info for player BroCmon
+000011E4  7C02                     369          move.l  #2,d6        
+000011E6  4E75                     370          rts        
+000011E8                           371  Ffighter:
+000011E8  0804 0018                372          btst    #24,d4      ; inventory still in d4       
+000011EC  67D4                     373          beq     fighterLoop
+000011EE                           374          
+000011EE                           375          * if they do have it, set info for player BroCmon
+000011EE  7C01                     376          move.l  #1,d6         
+000011F0  4E75                     377          rts
+000011F2                           378  Wfighter:        
+000011F2  0804 0008                379          btst    #8,d4      ; inventory still in d4       
+000011F6  67CA                     380          beq     fighterLoop
+000011F8                           381          
+000011F8                           382          * if they do have it, set info for player BroCmon
+000011F8  7C03                     383          move.l  #3,d6 
+000011FA  4E75                     384          rts        
+000011FC                           385  selection:
+000011FC                           386          
+000011FC                           387          * check key press, then test register bits for input
+000011FC  4EB9 00001C2E            388          jsr     checkKeyPress
+00001202  0801 0018                389          btst.l  #24,d1      ; check for left arrow
+00001206  6600 0032                390          bne     Fstarter
+0000120A  0801 0010                391          btst.l  #16,d1      ; check for right arrow
+0000120E  6600 004C                392          bne     Wstarter
+00001212  0801 0008                393          btst.l  #8,d1       ; check for up arrow
+00001216  67E4                     394          beq     selection
+00001218                           395  
+00001218                           396  Gstarter:
+00001218  43F9 000382FE            397          lea     g_congrats,a1
+0000121E  45F9 0006E772            398          lea     grass,a2
+00001224  4EB9 000017D6            399          jsr     obtainScreen
+0000122A  41F9 00001D48            400          lea     inventory,a0
+00001230  2010                     401          move.l  (a0),d0
+00001232  08C0 0010                402          bset    #16,d0
+00001236  2080                     403          move.l  d0,(a0)
+00001238  4E75                     404          rts           
+0000123A                           405  Fstarter:
+0000123A  43F9 0002DEB8            406          lea     f_congrats,a1
+00001240  45F9 0006720C            407          lea     fire,a2
+00001246  4EB9 000017D6            408          jsr     obtainScreen
+0000124C  41F9 00001D48            409          lea     inventory,a0
+00001252  2010                     410          move.l  (a0),d0
+00001254  08C0 0018                411          bset    #24,d0
+00001258  2080                     412          move.l  d0,(a0)
+0000125A  4E75                     413          rts   
+0000125C                           414  Wstarter:
+0000125C  43F9 00042744            415          lea     w_congrats,a1
+00001262  45F9 00075CD8            416          lea     water,a2
+00001268  4EB9 000017D6            417          jsr     obtainScreen
+0000126E  41F9 00001D48            418          lea     inventory,a0
+00001274  2010                     419          move.l  (a0),d0
+00001276  08C0 0008                420          bset    #8,d0
+0000127A  2080                     421          move.l  d0,(a0)
+0000127C  4E75                     422          rts
+0000127E                           423  drawFoption:
+0000127E  41F9 0007D23E            424          lea     f_option,a0 ; load in the image
+00001284  263C 000000AA            425          move.l  #170,d3     ; bottom left X on screen
+0000128A  243C 00000132            426          move.l  #306,d2     ; bottom left Y on screen        
+00001290  4EB8 1064                427          jsr     drawWholeBMP    ; draw the image
+00001294  4E75                     428          rts
+00001296                           429  drawGoption:
+00001296  41F9 00086D24            430          lea     g_option,a0 ; load in the image
+0000129C  263C 0000010E            431          move.l  #270,d3     ; bottom left X on screen
+000012A2  243C 00000132            432          move.l  #306,d2     ; bottom left Y on screen        
+000012A8  4EB8 1064                433          jsr     drawWholeBMP    ; draw the image
+000012AC  4E75                     434          rts
+000012AE                           435  drawWoption:
+000012AE  41F9 0009080A            436          lea     w_option,a0 ; load in the image
+000012B4  263C 00000172            437          move.l  #370,d3     ; bottom left X on screen
+000012BA  243C 00000132            438          move.l  #306,d2     ; bottom left Y on screen        
+000012C0  4EB8 1064                439          jsr     drawWholeBMP    ; draw the image
+000012C4  4E75                     440          rts     
+000012C6                           441  
+000012C6                           442  
+000012C6                           443  
+000012C6                           444  
+000012C6                           445  
+000012C6                           446  
+000012C6                           447  
+000012C6                           448  
+000012C6                           449  
+000012C6                           450  
+000012C6                           451  
+000012C6                           452  
+000012C6                           453  
+000012C6                           454  
+000012C6                           455  
+000012C6                           456  
+000012C6                           457  
+000012C6                           458  
+000012C6                           459  
+000012C6                           460  
+000012C6                           461  
+000012C6                           462  
+000012C6                           463  
+000012C6                           464  
+000012C6                           465  
+000012C6                           466  
+000012C6                           467  
+000012C6                           468  
+000012C6                           469  
+000012C6                           470  
+000012C6                           471  
+000012C6                           472  
+000012C6                           473  
+000012C6                           474  
+000012C6                           475  
+000012C6                           476  
+000012C6                           477  
+000012C6                           478  
+000012C6                           479  
+000012C6                           480  
+000012C6                           481  
+000012C6                           482  
+000012C6                           483  
+000012C6                           484  
+000012C6                           485  
+000012C6                           486  
+000012C6                           487  
+000012C6                           488  
+000012C6                           489  
+000012C6                           490  
+000012C6                           491  
+000012C6                           492  
+000012C6                           493  
+000012C6                           494  
+000012C6                           495  
+000012C6                           496  
+000012C6                           497  -------------------- end include --------------------
+000012C6                           498          INCLUDE     "Fight.X68"
+000012C6  =00000057                499  RECT                    EQU 87
+000012C6  =00000051                500  FILL_COLOR              EQU 81
+000012C6                           501  
+000012C6  =001515E6                502  PROJ_COLOR              EQU $001515E6
+000012C6  =00000008                503  PROJ_V                  EQU 8
+000012C6  =00000001                504  PROJ_A                  EQU 1
+000012C6  =002EDCFF                505  LED_COLOR               EQU $002EDCFF
+000012C6                           506  fight:
+000012C6                           507          
+000012C6                           508          * first, player chooses which BroCmon they will use
+000012C6  4EB8 116E                509          jsr     chooseFighter
+000012CA                           510          
+000012CA                           511          * adjust damage value based on BroCmon types
+000012CA  4EB9 000014A2            512          jsr     assignDamage
+000012D0                           513          
+000012D0                           514          * next, get enemy and fighter choice        
+000012D0                           515          * check what BroCmon player is using
+000012D0                           516          * for user's and wild BroCmon, load the attack and defend
+000012D0                           517          * bitmaps into registers for use later on
+000012D0  BC7C 0001                518          cmp.w   #1,d6
+000012D4  6600 0014                519          bne     userNotF
+000012D8  43F9 0006720C            520          lea     fire,a1
+000012DE  47F9 0009A2F0            521          lea     d_cyn,a3
+000012E4  49F9 000C6354            522          lea     al_cyn,a4
+000012EA                           523  userNotF:
+000012EA  BC7C 0002                524          cmp.w   #2,d6
+000012EE  6600 0014                525          bne     userNotG
+000012F2  43F9 0006E772            526          lea     grass,a1
+000012F8  47F9 000A1856            527          lea     d_chi,a3
+000012FE  49F9 000CD8BA            528          lea     al_chi,a4
+00001304                           529  userNotG:
+00001304  BC7C 0003                530          cmp.w   #3,d6
+00001308  6600 0014                531          bne     userNotW
+0000130C  43F9 00075CD8            532          lea     water,a1
+00001312  47F9 000A8DBC            533          lea     d_tot,a3
+00001318  49F9 000D4E20            534          lea     al_tot,a4
+0000131E                           535  userNotW:      
+0000131E                           536          
+0000131E                           537          * check what wild BroCmon is fighting
+0000131E  BE7C 0001                538          cmp.w   #1,d7
+00001322  6600 0014                539          bne     wildNotF
+00001326  45F9 0006720C            540          lea     fire,a2
+0000132C  4BF9 0009A2F0            541          lea     d_cyn,a5
+00001332  4DF9 000B0322            542          lea     ar_cyn,a6
+00001338                           543  wildNotF:
+00001338  BE7C 0002                544          cmp.w   #2,d7
+0000133C  6600 0014                545          bne     wildNotG
+00001340  45F9 0006E772            546          lea     grass,a2
+00001346  4BF9 000A1856            547          lea     d_chi,a5
+0000134C  4DF9 000B7888            548          lea     ar_chi,a6
+00001352                           549  wildNotG:
+00001352  BE7C 0003                550          cmp.w   #3,d7
+00001356  6600 0014                551          bne     wildNotW
+0000135A  45F9 00075CD8            552          lea     water,a2
+00001360  4BF9 000A8DBC            553          lea     d_tot,a5
+00001366  4DF9 000BEDEE            554          lea     ar_tot,a6
+0000136C                           555  wildNotW:          
+0000136C                           556          
+0000136C                           557          * show versus screen and wait for enter
+0000136C  4EB9 000016B4            558          jsr     VSscreen
+00001372  4EB9 00001C4C            559          jsr     enterLoop
+00001378                           560          
+00001378                           561          * save off which BroCmon we're fighting for later
+00001378  43F9 00001D5C            562          lea     eSave,a1
+0000137E  48D1 0080                563          movem.l d7,(a1)
+00001382                           564          
+00001382                           565          * Now set some initial information before beginning        
+00001382                           566          * set player BroCmon health
+00001382  43F9 00001D50            567          lea     pHealth,a1
+00001388  22BC 0000001E            568          move.l  #HEALTH,(a1)
+0000138E                           569          
+0000138E                           570          * set wild BroCmon health
+0000138E  43F9 00001D54            571          lea     wHealth,a1
+00001394  22BC 0000001E            572          move.l  #HEALTH,(a1)
+0000139A                           573          
+0000139A                           574  beginD:             
+0000139A                           575          * draw their turn screen
+0000139A  4EB9 00001690            576          jsr     drawTheirTurn
+000013A0                           577     
+000013A0                           578          * set initial wild BroCmon proj pos
+000013A0  7C64                     579          move.l  #100,d6
+000013A2  7E64                     580          move.l  #100,d7
+000013A4                           581          
+000013A4                           582          * load the defending battlefield
+000013A4  4EB9 00001712            583          jsr     d_Screen
+000013AA                           584          
+000013AA                           585          * clear out mash keeper
+000013AA  4281                     586          clr.l   d1
+000013AC                           587          
+000013AC                           588          * clear frame counter
+000013AC  4282                     589          clr.l   d2
+000013AE                           590      
+000013AE                           591          * set wild BroCmon movement at 0 and velocity at 1 pixel
+000013AE  4283                     592          clr.l   d3
+000013B0  7808                     593          move.l  #PROJ_V,d4
+000013B2                           594          
+000013B2                           595          * set wild BroCmon attack damage
+000013B2  43F9 00001D58            596          lea     dam,a1
+000013B8  2A11                     597          move.l  (a1),d5
+000013BA                           598          
+000013BA                           599  defendLoop:
+000013BA                           600  
+000013BA                           601          * redraw background chunks
+000013BA  41F9 001BD3BC            602          lea     d_field,a0
+000013C0  4EB9 0000150A            603          jsr     drawFieldChunk
+000013C6  4EB9 00001B20            604          jsr     redrawConsole
+000013CC                           605          
+000013CC                           606          * update wild BroCmon proj position and velocity
+000013CC  4EB9 00001528            607          jsr     deccelerate
+000013D2  4EB9 00001544            608          jsr     updateWild
+000013D8                           609          
+000013D8                           610          * draw wild BroCmon's projectile
+000013D8  4EB9 000015AA            611          jsr     drawProj
+000013DE                           612          
+000013DE                           613          * get player input, then update 7 segments
+000013DE  4EB9 000015EC            614          jsr     playDef      
+000013E4  4EB9 00001AF8            615          jsr     updateConsole
+000013EA                           616          
+000013EA                           617          * check for BroCmon collision, change scenes if needed
+000013EA  BCBC 000001B8            618          cmp.l   #440,d6
+000013F0  6DC8                     619          blt     defendLoop
+000013F2                           620  
+000013F2                           621          * update player health value using damage
+000013F2  43F9 00001D50            622          lea     pHealth,a1
+000013F8  2011                     623          move.l  (a1),d0
+000013FA  9085                     624          sub.l   d5,d0
+000013FC  2280                     625          move.l  d0,(a1)        
+000013FE                           626          * if player's health is now 0 or below, quit to faint screen
+000013FE  6F00 0098                627          ble     dead       
+00001402                           628          
+00001402                           629  beginA:     
+00001402                           630          * draw your turn screen
+00001402  4EB9 0000166C            631          jsr     drawYourTurn
+00001408                           632          
+00001408                           633          * set initial ally BroCmon proj pos
+00001408  2C3C 000001FE            634          move.l  #510,d6
+0000140E  7E64                     635          move.l  #100,d7   
+00001410                           636          
+00001410                           637          * load the attacking battlefield
+00001410  4EB9 00001754            638          jsr     a_Screen
+00001416                           639          
+00001416                           640          * clear out mash keeper
+00001416  4281                     641          clr.l   d1
+00001418                           642          
+00001418                           643          * clear frame counter
+00001418  4282                     644          clr.l   d2
+0000141A                           645      
+0000141A                           646          * set ally BroCmon movement at 0 and velocity at 1 pixel
+0000141A  4283                     647          clr.l   d3
+0000141C  7808                     648          move.l  #PROJ_V,d4
+0000141E                           649          
+0000141E                           650          * set ally BroCmon attack damage
+0000141E  7A00                     651          move.l  #0,d5        
+00001420                           652          
+00001420                           653  attackLoop:
+00001420                           654  
+00001420                           655          * redraw background chunks
+00001420  41F9 0029E3F2            656          lea     a_field,a0
+00001426  4EB9 0000150A            657          jsr     drawFieldChunk
+0000142C  4EB9 00001B20            658          jsr     redrawConsole
+00001432                           659          
+00001432                           660          * update ally BroCmon proj position and velocity
+00001432  4EB9 00001528            661          jsr     deccelerate
+00001438  4EB9 00001576            662          jsr     updateAlly
+0000143E                           663          
+0000143E                           664          * draw ally BroCmon's projectile
+0000143E  4EB9 000015AA            665          jsr     drawProj
+00001444                           666          
+00001444                           667          * get player input, then update 7 segments
+00001444  4EB9 0000162C            668          jsr     playAtt      
+0000144A  4EB9 00001AF8            669          jsr     updateConsole
+00001450                           670          
+00001450                           671          * check for BroCmon collision, change scenes if needed
+00001450  BCBC 00000096            672          cmp.l   #150,d6
+00001456  6EC8                     673          bgt     attackLoop      
+00001458                           674  
+00001458                           675          * update wild health value using damage
+00001458  43F9 00001D54            676          lea     wHealth,a1
+0000145E  2011                     677          move.l  (a1),d0
+00001460  9085                     678          sub.l   d5,d0
+00001462  2280                     679          move.l  d0,(a1)        
+00001464                           680          * if wild health is still above 0, branch back up to their turn
+00001464  6E00 FF34                681          bgt     beginD  
+00001468                           682  
+00001468                           683  capture:
+00001468                           684          
+00001468                           685          * add wild BroCmon to the inventory
+00001468  43F9 00001D5C            686          lea     eSave,a1
+0000146E  2E11                     687          move.l  (a1),d7
+00001470                           688          
+00001470                           689          * check what wild BroCmon we got, then add it to inventory
+00001470                           690          * also load in art for obtain screen
+00001470  BE7C 0001                691          cmp.w   #1,d7
+00001474  6600 0006                692          bne     capNotF
+00001478  4EB8 123A                693          jsr     Fstarter
+0000147C                           694  capNotF:
+0000147C  BE7C 0002                695          cmp.w   #2,d7
+00001480  6600 0006                696          bne     capNotG
+00001484  4EB8 1218                697          jsr     Gstarter 
+00001488                           698  capNotG:
+00001488  BE7C 0003                699          cmp.w   #3,d7
+0000148C  6600 0006                700          bne     capNotW
+00001490  4EB8 125C                701          jsr     Wstarter
+00001494                           702  capNotW:                   
+00001494                           703                                                   
+00001494  7C01                     704          move.l  #1,d6       ; tell the main game loop we had a fight
+00001496  4E75                     705          rts
+00001498                           706          
+00001498                           707  dead:
+00001498  4EB9 00001796            708          jsr     drawFaint
+0000149E  7C01                     709          move.l  #1,d6       ; tell the main game loop we had a fight
+000014A0  4E75                     710          rts                
+000014A2                           711  assignDamage:
+000014A2                           712  
+000014A2  41F9 00001D58            713          lea     dam,a0
+000014A8                           714          
+000014A8                           715          * compare the types
+000014A8  BE46                     716          cmp.w   d6,d7
+000014AA  6700 0056                717          beq     twins
+000014AE  6D00 002A                718          blt     wildlesst
+000014B2                           719          
+000014B2                           720  wildgreatt:
+000014B2  BE7C 0002                721          cmp.w   #2,d7   ; check if it's grass
+000014B6  6600 000A                722          bne     wWater  ; if it's greater than but not grass, it's water
+000014BA                           723          * if it's grass and greater, then ally is fire
+000014BA  20BC 0000000A            724          move.l  #DAMAGE_D,(a0)   ; grass will disadvantage on fire ally
+000014C0  4E75                     725          rts
+000014C2                           726  wWater:
+000014C2                           727          * if wild is water and greater, we need to check ally
+000014C2  BC7C 0001                728          cmp.w   #1,d6
+000014C6  6600 000A                729          bne     aGrass
+000014CA  20BC 0000001E            730          move.l  #DAMAGE_A,(a0)   ; water will have advantage on ally fire
+000014D0  4E75                     731          rts
+000014D2                           732  aGrass:        
+000014D2  20BC 0000000A            733          move.l  #DAMAGE_D,(a0)   ; water will have dis on ally grass
+000014D8  4E75                     734          rts
+000014DA                           735          
+000014DA                           736  wildlesst:             
+000014DA  BE7C 0002                737          cmp.w   #2,d7   ; check if it's grass
+000014DE  6600 000A                738          bne     wFire   ; if it's less than but not grass, it's fire
+000014E2                           739          * if it's grass and less, then ally is water
+000014E2  20BC 0000001E            740          move.l  #DAMAGE_A,(a0)   ; grass will have advantage on water ally
+000014E8  4E75                     741          rts
+000014EA                           742  wFire:  
+000014EA                           743          * if wild is fire and less, we need to check ally
+000014EA  BC7C 0002                744          cmp.w   #2,d6
+000014EE  6600 000A                745          bne     aWater
+000014F2  20BC 0000001E            746          move.l  #DAMAGE_A,(a0)   ; fire will have advantage on ally grass
+000014F8  4E75                     747          rts
+000014FA                           748  aWater:
+000014FA  20BC 0000000A            749          move.l  #DAMAGE_D,(a0)   ; fire will have dis on ally water
+00001500  4E75                     750          rts
+00001502                           751  twins:
+00001502  20BC 00000014            752          move.l  #DAMAGE_N,(a0)    
+00001508  4E75                     753          rts
+0000150A                           754  drawFieldChunk:
+0000150A                           755          
+0000150A                           756          * save off d1,d2,d3,d4,d5
+0000150A  43F9 00001D60            757          lea     fSave,a1
+00001510  48D1 003E                758          movem.l d1-d5,(a1)
+00001514                           759          
+00001514                           760          * chunk width and height are the proj dimensions plus some buffer
+00001514  7821                     761          move.l  #PROJ_WIDTH+1,d4
+00001516  7A21                     762          move.l  #PROJ_HEIGHT+1,d5
+00001518                           763          
+00001518                           764          * d6 and d7 should already have moving proj position
+00001518                           765          
+00001518  4EB8 10D0                766          jsr     drawBMPchunk
+0000151C                           767          
+0000151C                           768          * move saved registers back in
+0000151C  43F9 00001D60            769          lea     fSave,a1
+00001522  4CD1 003E                770          movem.l (a1),d1-d5
+00001526  4E75                     771          rts
+00001528                           772  deccelerate:
+00001528                           773  
+00001528                           774          * increment frame counter
+00001528  5282                     775          add.l   #1,d2
+0000152A                           776          
+0000152A                           777          * check if deccel is needed, branch if not
+0000152A  B4BC 00000023            778          cmp.l   #35,d2
+00001530  6600 0010                779          bne     noDeccel
+00001534                           780          * check if vel is already 0
+00001534  B8BC 00000000            781          cmp.l   #0,d4
+0000153A  6700 0006                782          beq     noDeccel
+0000153E                           783          * decrement velocity
+0000153E  5384                     784          subi.l  #1,d4       ; lower the velocity 0.125 px
+00001540  4282                     785          clr.l   d2
+00001542                           786          
+00001542                           787  noDeccel:        
+00001542  4E75                     788          rts
+00001544                           789  updateWild:
+00001544                           790  
+00001544                           791          * save off d2 and the others
+00001544  43F9 00001D60            792          lea     fSave,a1
+0000154A  48D1 003E                793          movem.l d1-d5,(a1)
+0000154E                           794          
+0000154E                           795          * bring movement back to 0 if needed
+0000154E  B6BC 00000008            796          cmp.l   #8,d3       ; check that it isn't 1 before adding
+00001554  6D00 0004                797          blt     cont
+00001558  4283                     798          clr.l   d3
+0000155A                           799  cont:
+0000155A                           800          
+0000155A                           801          * add velocity to the movement
+0000155A  D684                     802          add.l   d4,d3
+0000155C                           803          
+0000155C                           804          * copy movement to a new reg and shift
+0000155C  2403                     805          move.l  d3,d2
+0000155E  E68A                     806          lsr.l   #3,d2      ; divide by 8
+00001560                           807          
+00001560                           808          * add shifted movement to positions
+00001560  DC82                     809          add.l   d2,d6
+00001562  DC82                     810          add.l   d2,d6
+00001564  DC82                     811          add.l   d2,d6
+00001566  DE82                     812          add.l   d2,d7
+00001568  DE82                     813          add.l   d2,d7
+0000156A                           814          
+0000156A                           815          * move saved registers back in, but only d1 and d2
+0000156A                           816          * because the change in movement and vel need to carry through
+0000156A  43F9 00001D60            817          lea     fSave,a1
+00001570  4CD1 0006                818          movem.l (a1),d1-d2
+00001574  4E75                     819          rts   
+00001576                           820  updateAlly:
+00001576                           821  
+00001576                           822          * save off d2 and the others
+00001576  43F9 00001D60            823          lea     fSave,a1
+0000157C  48D1 003E                824          movem.l d1-d5,(a1)
+00001580                           825          
+00001580                           826          * bring movement back to 0 if needed
+00001580  B6BC 00000008            827          cmp.l   #8,d3       ; check that it isn't 1 before adding
+00001586  6D00 0004                828          blt     conti
+0000158A  4283                     829          clr.l   d3
+0000158C                           830  conti:
+0000158C                           831          
+0000158C                           832          * add velocity to the movement
+0000158C  D684                     833          add.l   d4,d3
+0000158E                           834          
+0000158E                           835          * copy movement to a new reg and shift
+0000158E  2403                     836          move.l  d3,d2
+00001590  E68A                     837          lsr.l   #3,d2      ; divide by 8
+00001592                           838          
+00001592                           839          * subtract/add shifted movement to positions
+00001592  9C82                     840          sub.l   d2,d6
+00001594  9C82                     841          sub.l   d2,d6
+00001596  9C82                     842          sub.l   d2,d6
+00001598  DE82                     843          add.l   d2,d7
+0000159A  DE82                     844          add.l   d2,d7
+0000159C                           845          
+0000159C                           846          * move saved registers back in, but only d1 and d2
+0000159C                           847          * because the change in movement and vel need to carry through
+0000159C  43F9 00001D60            848          lea     fSave,a1
+000015A2  4CD1 0006                849          movem.l (a1),d1-d2
+000015A6  4E75                     850          rts 
+000015A8  4E75                     851          rts        
+000015AA                           852  drawProj:
+000015AA                           853  
+000015AA                           854          * save off registers
+000015AA  43F9 00001D60            855          lea     fSave,a1
+000015B0  48D1 003E                856          movem.l d1-d5,(a1)
+000015B4                           857  
+000015B4                           858          * set pen color
+000015B4  223C 001515E6            859          move.l  #PROJ_COLOR,d1
+000015BA  7050                     860          move.l  #PEN_COLOR,d0
+000015BC  4E4F                     861          trap    #15
+000015BE                           862          
+000015BE                           863          * set fill color
+000015BE  223C 001515E6            864          move.l  #PROJ_COLOR,d1
+000015C4  7051                     865          move.l  #FILL_COLOR,d0
+000015C6  4E4F                     866          trap    #15
+000015C8                           867          
+000015C8                           868          * draw the projectile
+000015C8  2206                     869          move.l  d6,d1
+000015CA  2606                     870          move.l  d6,d3
+000015CC  0683 00000020            871          add.l   #PROJ_WIDTH,d3
+000015D2  2807                     872          move.l  d7,d4
+000015D4  2407                     873          move.l  d7,d2
+000015D6  0482 00000020            874          subi.l  #PROJ_HEIGHT,d2
+000015DC  7057                     875          move.l  #RECT,d0
+000015DE  4E4F                     876          trap    #15
+000015E0                           877          
+000015E0                           878          * move saved registers back in
+000015E0  43F9 00001D60            879          lea     fSave,a1
+000015E6  4CD1 003E                880          movem.l (a1),d1-d5      
+000015EA                           881            
+000015EA  4E75                     882          rts
+000015EC                           883  playDef:
+000015EC                           884  
+000015EC                           885          * save off registers
+000015EC  43F9 00001D60            886          lea     fSave,a1
+000015F2  48D1 003E                887          movem.l d1-d5,(a1)
+000015F6                           888          
+000015F6  4EB9 00001C2E            889          jsr     checkKeyPress
+000015FC  0801 0000                890          btst.l  #0,d1           ; check for down arrow
+00001600  6700 0026                891          beq     nopress         ; branch if not pressed
+00001604                           892          
+00001604                           893          * move saved registers back in
+00001604  43F9 00001D60            894          lea     fSave,a1
+0000160A  4CD1 003E                895          movem.l (a1),d1-d5  
+0000160E                           896          
+0000160E                           897          * check if button was just unpressed
+0000160E                           898          * this prevents player from just holding the button
+0000160E                           899          * to lower the damage score
+0000160E  B2BC 00000000            900          cmp.l   #0,d1
+00001614  6600 000E                901          bne     keepit
+00001618                           902          
+00001618                           903          * check if incoming damage is already 0
+00001618  BABC 00000000            904          cmp.l   #0,d5
+0000161E  6700 0004                905          beq     keepit
+00001622                           906          
+00001622  5385                     907          subi.l  #1,d5           ; subtract 1 from damage
+00001624                           908          
+00001624                           909  keepit:        
+00001624  7201                     910          move.l  #1,d1           ; mark in mash keeper that it's pressed
+00001626  4E75                     911          rts          
+00001628                           912          
+00001628                           913  nopress:
+00001628  4281                     914          clr.l   d1              ; mark in mash keeper that it's unpressed
+0000162A  4E75                     915          rts              
+0000162C                           916  playAtt:
+0000162C                           917  
+0000162C                           918          * save off registers
+0000162C  43F9 00001D60            919          lea     fSave,a1
+00001632  48D1 003E                920          movem.l d1-d5,(a1)
+00001636                           921          
+00001636  4EB9 00001C2E            922          jsr     checkKeyPress
+0000163C  0801 0008                923          btst.l  #8,d1           ; check for down arrow
+00001640  6700 0026                924          beq     nopres         ; branch if not pressed
+00001644                           925          
+00001644                           926          * move saved registers back in
+00001644  43F9 00001D60            927          lea     fSave,a1
+0000164A  4CD1 003E                928          movem.l (a1),d1-d5  
+0000164E                           929          
+0000164E                           930          * check if button was just unpressed
+0000164E                           931          * this prevents player from just holding the button
+0000164E                           932          * to increase the damage score
+0000164E  B2BC 00000000            933          cmp.l   #0,d1
+00001654  6600 000E                934          bne     keep
+00001658                           935          
+00001658                           936          * check if incoming damage is already 99
+00001658  BABC 00000063            937          cmp.l   #99,d5
+0000165E  6700 0004                938          beq     keep
+00001662                           939          
+00001662  5285                     940          add.l   #1,d5           ; add 1 to damage
+00001664                           941          
+00001664                           942  keep:        
+00001664  7201                     943          move.l  #1,d1           ; mark in mash keeper that it's pressed
+00001666  4E75                     944          rts          
+00001668                           945          
+00001668                           946  nopres:
+00001668  4281                     947          clr.l   d1              ; mark in mash keeper that it's unpressed
+0000166A  4E75                     948          rts 
+0000166C                           949  drawYourTurn:
+0000166C  4EB9 00001C0A            950          jsr     clearScreen
+00001672  41F9 000167E2            951          lea     u_turn,a0
+00001678  263C 0000010E            952          move.l  #270,d3     ; bottom left X on screen
+0000167E  243C 000000FD            953          move.l  #253,d2     ; bottom left Y on screen        
+00001684  4EB8 1064                954          jsr     drawWholeBMP    ; draw the image
+00001688                           955          
+00001688  4EB9 00001C16            956          jsr     swapBuffers
+0000168E  4E75                     957          rts
+00001690                           958  drawTheirTurn:
+00001690  4EB9 00001C0A            959          jsr     clearScreen
+00001696  41F9 00018564            960          lea     t_turn,a0
+0000169C  263C 00000108            961          move.l  #264,d3     ; bottom left X on screen
+000016A2  243C 000000FD            962          move.l  #253,d2     ; bottom left Y on screen        
+000016A8  4EB8 1064                963          jsr     drawWholeBMP    ; draw the image
+000016AC                           964          
+000016AC  4EB9 00001C16            965          jsr     swapBuffers
+000016B2  4E75                     966          rts
+000016B4                           967  VSscreen:
+000016B4                           968  
+000016B4  4EB9 00001C0A            969          jsr     clearScreen
+000016BA                           970          
+000016BA                           971          * draw player's BroCmon
+000016BA  2049                     972          move.l  a1,a0
+000016BC  263C 000000BC            973          move.l  #188,d3     ; bottom left X on screen
+000016C2  243C 00000122            974          move.l  #290,d2     ; bottom left Y on screen        
+000016C8  4EB8 1064                975          jsr     drawWholeBMP    ; draw the image
+000016CC                           976          
+000016CC                           977          * draw wild BroCmon
+000016CC  204A                     978          move.l  a2,a0
+000016CE  263C 00000160            979          move.l  #352,d3     ; bottom left X on screen
+000016D4  243C 00000122            980          move.l  #290,d2     ; bottom left Y on screen        
+000016DA  4EB8 1064                981          jsr     drawWholeBMP    ; draw the image
+000016DE                           982          
+000016DE                           983          * draw VS sign
+000016DE  41F9 0001FE84            984          lea     versus,a0
+000016E4  263C 00000120            985          move.l  #288,d3     ; bottom left X on screen
+000016EA  243C 00000110            986          move.l  #272,d2     ; bottom left Y on screen        
+000016F0  4EB8 1064                987          jsr     drawWholeBMP    ; draw the image
+000016F4                           988          
+000016F4                           989          * draw press enter 
+000016F4  41F9 000154EC            990          lea     r_arrow,a0
+000016FA  263C 00000118            991          move.l  #280,d3     ; bottom left X on screen
+00001700  243C 0000012C            992          move.l  #300,d2     ; bottom left Y on screen        
+00001706  4EB8 1064                993          jsr     drawWholeBMP    ; draw the image        
+0000170A                           994          
+0000170A  4EB9 00001C16            995          jsr     swapBuffers        
+00001710  4E75                     996          rts       
+00001712                           997  d_Screen:
+00001712                           998          
+00001712  4EB9 00001C0A            999          jsr     clearScreen
+00001718                          1000          
+00001718                          1001          * draw background
+00001718  41F9 001BD3BC           1002          lea     d_field,a0
+0000171E  7600                    1003          move.l  #0,d3       ; bottom left X on screen
+00001720  243C 000001E0           1004          move.l  #480,d2     ; bottom left Y on screen        
+00001726  4EB8 1064               1005          jsr     drawWholeBMP    ; draw the image
+0000172A                          1006          
+0000172A                          1007          * draw player's BroCmon
+0000172A  204B                    1008          move.l  a3,a0
+0000172C  263C 000001C2           1009          move.l  #450,d3     ; bottom left X on screen
+00001732  243C 00000168           1010          move.l  #360,d2     ; bottom left Y on screen        
+00001738  4EB8 1064               1011          jsr     drawWholeBMP    ; draw the image
+0000173C                          1012          
+0000173C                          1013          * draw wild BroCmon
+0000173C  204E                    1014          move.l  a6,a0
+0000173E  7600                    1015          move.l  #0,d3       ; bottom left X on screen
+00001740  7464                    1016          move.l  #100,d2     ; bottom left Y on screen        
+00001742  4EB8 1064               1017          jsr     drawWholeBMP    ; draw the image
+00001746                          1018          
+00001746                          1019          * draw health counts
+00001746  4EB9 00001AAE           1020          jsr     updateHealth
+0000174C                          1021          
+0000174C  4EB9 00001C16           1022          jsr     swapBuffers        
+00001752  4E75                    1023          rts
+00001754                          1024  a_Screen:
+00001754                          1025          
+00001754  4EB9 00001C0A           1026          jsr     clearScreen
+0000175A                          1027          
+0000175A                          1028          * draw background
+0000175A  41F9 0029E3F2           1029          lea     a_field,a0
+00001760  7600                    1030          move.l  #0,d3     ; bottom left X on screen
+00001762  243C 000001E0           1031          move.l  #480,d2     ; bottom left Y on screen        
+00001768  4EB8 1064               1032          jsr     drawWholeBMP    ; draw the image
+0000176C                          1033          
+0000176C                          1034          * draw player's BroCmon
+0000176C  204C                    1035          move.l  a4,a0
+0000176E  263C 0000021C           1036          move.l  #540,d3     ; bottom left X on screen
+00001774  7464                    1037          move.l  #100,d2     ; bottom left Y on screen        
+00001776  4EB8 1064               1038          jsr     drawWholeBMP    ; draw the image
+0000177A                          1039          
+0000177A                          1040          * draw wild BroCmon
+0000177A  204D                    1041          move.l  a5,a0
+0000177C  765A                    1042          move.l  #90,d3      ; bottom left X on screen
+0000177E  243C 00000168           1043          move.l  #360,d2     ; bottom left Y on screen        
+00001784  4EB8 1064               1044          jsr     drawWholeBMP    ; draw the image
+00001788                          1045          
+00001788                          1046          * draw health counts
+00001788  4EB9 00001AAE           1047          jsr     updateHealth
+0000178E                          1048          
+0000178E  4EB9 00001C16           1049          jsr     swapBuffers        
+00001794  4E75                    1050          rts
+00001796                          1051  drawFaint:
+00001796                          1052  
+00001796  4EB9 00001C0A           1053          jsr     clearScreen
+0000179C                          1054          
+0000179C                          1055          * draw fainted message
+0000179C  41F9 00022EBA           1056          lea     fainted,a0
+000017A2  263C 000000AA           1057          move.l  #170,d3     ; bottom left X on screen
+000017A8  243C 00000109           1058          move.l  #265,d2     ; bottom left Y on screen        
+000017AE  4EB8 1064               1059          jsr     drawWholeBMP    ; draw the image   
+000017B2                          1060          
+000017B2                          1061          * draw enter sign
+000017B2  41F9 000154EC           1062          lea     r_arrow,a0
+000017B8  263C 00000118           1063          move.l  #280,d3     ; bottom left X on screen
+000017BE  243C 00000140           1064          move.l  #320,d2     ; bottom left Y on screen        
+000017C4  4EB8 1064               1065          jsr     drawWholeBMP    ; draw the image
+000017C8                          1066          
+000017C8  4EB9 00001C16           1067          jsr     swapBuffers        
+000017CE  4EB9 00001C4C           1068          jsr     enterLoop
+000017D4  4E75                    1069          rts     
+000017D6                          1070  obtainScreen:  
+000017D6                          1071  
+000017D6  4EB9 00001C0A           1072          jsr     clearScreen
+000017DC                          1073          
+000017DC                          1074          * draw congrats message
+000017DC  2049                    1075          move.l  a1,a0
+000017DE  263C 000000B4           1076          move.l  #180,d3     ; bottom left X on screen
+000017E4  243C 000000BE           1077          move.l  #190,d2     ; bottom left Y on screen        
+000017EA  4EB8 1064               1078          jsr     drawWholeBMP    ; draw the image
+000017EE                          1079          
+000017EE                          1080          * draw obtained BroCmon
+000017EE  204A                    1081          move.l  a2,a0
+000017F0  263C 0000010E           1082          move.l  #270,d3     ; bottom left X on screen
+000017F6  243C 00000122           1083          move.l  #290,d2     ; bottom left Y on screen        
+000017FC  4EB8 1064               1084          jsr     drawWholeBMP    ; draw the image
+00001800                          1085          
+00001800                          1086          * draw enter sign
+00001800  41F9 000154EC           1087          lea     r_arrow,a0
+00001806  263C 00000118           1088          move.l  #280,d3     ; bottom left X on screen
+0000180C  243C 00000140           1089          move.l  #320,d2     ; bottom left Y on screen        
+00001812  4EB8 1064               1090          jsr     drawWholeBMP    ; draw the image
+00001816                          1091          
+00001816  4EB9 00001C16           1092          jsr     swapBuffers        
+0000181C  4EB9 00001C4C           1093          jsr     enterLoop
+00001822  4E75                    1094          rts      
+00001824                          1095  
+00001824                          1096  
+00001824                          1097  
+00001824                          1098  
+00001824                          1099  
+00001824                          1100  
+00001824                          1101  
+00001824                          1102  
+00001824                          1103  
+00001824                          1104  
+00001824                          1105  
+00001824                          1106  
+00001824                          1107  
+00001824                          1108  
+00001824                          1109  
+00001824                          1110  
+00001824                          1111  
+00001824                          1112  
+00001824                          1113  
+00001824                          1114  
+00001824                          1115  
+00001824                          1116  
+00001824                          1117  
+00001824                          1118  
+00001824                          1119  
+00001824                          1120  
+00001824                          1121  
+00001824                          1122  
+00001824                          1123  
+00001824                          1124  
+00001824                          1125  
+00001824                          1126  
+00001824                          1127  
+00001824                          1128  
+00001824                          1129  
+00001824                          1130  
+00001824                          1131  
+00001824                          1132  
+00001824                          1133  
+00001824                          1134  
+00001824                          1135  
+00001824                          1136  
+00001824                          1137  
+00001824                          1138  
+00001824                          1139  
+00001824                          1140  
+00001824                          1141  
+00001824                          1142  
+00001824                          1143  
+00001824                          1144  
+00001824                          1145  
+00001824                          1146  
+00001824                          1147  
+00001824                          1148  
+00001824                          1149  
+00001824                          1150  
+00001824                          1151  
+00001824                          1152  
+00001824                          1153  
+00001824                          1154  
+00001824                          1155  
+00001824                          1156  
+00001824                          1157  
+00001824                          1158  
+00001824                          1159  
+00001824                          1160  
+00001824                          1161  
+00001824                          1162  
+00001824                          1163  
+00001824                          1164  
+00001824                          1165  
+00001824                          1166  
+00001824                          1167  
+00001824                          1168  
+00001824                          1169  
+00001824                          1170  
+00001824                          1171  
+00001824                          1172  
+00001824                          1173  
+00001824                          1174  
+00001824                          1175  
+00001824                          1176  
+00001824                          1177  
+00001824                          1178  
+00001824                          1179  
+00001824                          1180  
+00001824                          1181  
+00001824                          1182  
+00001824                          1183  
+00001824                          1184  
+00001824                          1185  
+00001824                          1186  
+00001824                          1187  
+00001824                          1188  
+00001824                          1189  
+00001824                          1190  
+00001824                          1191  
+00001824                          1192  
+00001824                          1193  
+00001824                          1194  
+00001824                          1195  
+00001824                          1196  
+00001824                          1197  
+00001824                          1198  
+00001824                          1199  
+00001824                          1200  
+00001824                          1201  
+00001824                          1202  
+00001824                          1203  
+00001824                          1204  
+00001824                          1205  
+00001824                          1206  
+00001824                          1207  
+00001824                          1208  
+00001824                          1209  -------------------- end include --------------------
+00001824                          1210          INCLUDE     "Movement.X68"
+00001824                          1211  ALL_REG                 REG     d0-d7/a0-a6
+00001824  =00000064               1212  ISLAND_L_EDGE           EQU     100
+00001824  =0000021C               1213  ISLAND_R_EDGE           EQU     540
+00001824  =00000064               1214  ISLAND_T_EDGE           EQU     100
+00001824  =0000017C               1215  ISLAND_B_EDGE           EQU     380
+00001824                          1216  
+00001824                          1217  updatePlayer:
+00001824  4EB9 00001C2E           1218          jsr     checkKeyPress
+0000182A  0801 0018               1219          btst.l  #24,d1
+0000182E  6600 001C               1220          bne     left
+00001832  0801 0010               1221          btst.l  #16,d1
+00001836  6600 0022               1222          bne     right
+0000183A  0801 0008               1223          btst.l  #8,d1
+0000183E  6600 0028               1224          bne     up
+00001842  0801 0000               1225          btst.l  #0,d1
+00001846  6600 002E               1226          bne     down
+0000184A  4E75                    1227          rts
+0000184C                          1228       
+0000184C                          1229  left:
+0000184C  BCBC 00000066           1230          cmp.l   #ISLAND_L_EDGE+PLAYER_VELOCITY,d6
+00001852  6F00 0030               1231          ble     dontMove         
+00001856  5586                    1232          subi.l  #PLAYER_VELOCITY,d6
+00001858  4E75                    1233          rts
+0000185A                          1234  right:
+0000185A  BCBC 000001FA           1235          cmp.l   #ISLAND_R_EDGE-PLAYER_WIDTH-PLAYER_VELOCITY,d6
+00001860  6C00 0022               1236          bge     dontMove
+00001864  5486                    1237          add.l   #PLAYER_VELOCITY,d6
+00001866  4E75                    1238          rts
+00001868                          1239  up:
+00001868  BEBC 00000086           1240          cmp.l   #ISLAND_T_EDGE+PLAYER_HEIGHT+PLAYER_VELOCITY,d7
+0000186E  6F00 0014               1241          ble     dontMove
+00001872  5587                    1242          subi.l  #PLAYER_VELOCITY,d7
+00001874  4E75                    1243          rts
+00001876                          1244  down:
+00001876  BEBC 0000017A           1245          cmp.l   #ISLAND_B_EDGE-PLAYER_VELOCITY,d7
+0000187C  6C00 0006               1246          bge     dontMove
+00001880  5487                    1247          add.l   #PLAYER_VELOCITY,d7
+00001882  4E75                    1248          rts
+00001884                          1249  dontMove:
+00001884  4E75                    1250          rts     
+00001886                          1251  
+00001886                          1252  redrawIslandChunk:
+00001886                          1253          
+00001886  41F9 000DC386           1254          lea     island,a0
+0000188C  7820                    1255          move.l  #PLAYER_WIDTH,d4
+0000188E  7A20                    1256          move.l  #PLAYER_HEIGHT,d5
+00001890  4EB8 10D0               1257          jsr     drawBMPchunk        
+00001894  4E75                    1258          rts
+00001896                          1259  
+00001896                          1260  
+00001896                          1261  
+00001896                          1262  
+00001896                          1263  
+00001896                          1264  
+00001896                          1265  
+00001896                          1266  
+00001896                          1267  
+00001896                          1268  
+00001896                          1269  
+00001896                          1270  
+00001896                          1271  
+00001896                          1272  
+00001896                          1273  
+00001896                          1274  
+00001896                          1275  
+00001896                          1276  
+00001896                          1277  
+00001896                          1278  
+00001896                          1279  
+00001896                          1280  
+00001896                          1281  
+00001896                          1282  
+00001896                          1283  
+00001896                          1284  
+00001896                          1285  
+00001896                          1286  
+00001896                          1287  
+00001896                          1288  
+00001896                          1289  
+00001896                          1290  
+00001896                          1291  
+00001896                          1292  
+00001896                          1293  
+00001896                          1294  -------------------- end include --------------------
+00001896                          1295          INCLUDE     "Encounter.X68"
+00001896  =00000008               1296  GET_TIME                EQU     8
+00001896                          1297  
+00001896  =00000096               1298  GRASS_L_EDGE            EQU     150
+00001896  =0000015E               1299  GRASS_R_EDGE            EQU     350
+00001896  =00000082               1300  GRASS_T_EDGE            EQU     130
+00001896  =000000FA               1301  GRASS_B_EDGE            EQU     250
+00001896                          1302  encounter:
+00001896                          1303  
+00001896                          1304          * check if player is within the grass edges
+00001896  BCBC 00000096           1305          cmp.l   #GRASS_L_EDGE,d6
+0000189C  6D00 005C               1306          blt     notInGrass
+000018A0  BCBC 0000015E           1307          cmp.l   #GRASS_R_EDGE,d6
+000018A6  6E00 0052               1308          bgt     notInGrass
+000018AA  BEBC 00000082           1309          cmp.l   #GRASS_T_EDGE,d7
+000018B0  6D00 0048               1310          blt     notInGrass
+000018B4  BEBC 000000FA           1311          cmp.l   #GRASS_B_EDGE,d7
+000018BA  6E00 003E               1312          bgt     notInGrass
+000018BE                          1313          
+000018BE                          1314          * if they are, do a random check
+000018BE                          1315          * use the timer to check for encounter every 20 frames
+000018BE  41F9 00001D4C           1316          lea     tmr,a0
+000018C4  2010                    1317          move.l  (a0),d0
+000018C6  5380                    1318          subi.l  #1,d0       ; decrement the timer
+000018C8  6700 0006               1319          beq     itsTime
+000018CC  2080                    1320          move.l  d0,(a0)
+000018CE  4E75                    1321          rts
+000018D0                          1322          
+000018D0                          1323  itsTime:
+000018D0  20BC 00000014           1324          move.l  #20,(a0)    ; reset the timer
+000018D6                          1325          
+000018D6                          1326          * if the random number is less than a specific val, branch
+000018D6  4EB9 0000194A           1327          jsr     getRandom
+000018DC  BABC 00000055           1328          cmp.l   #85,d5
+000018E2  6D00 0018               1329          blt     FE
+000018E6  BABC 000000AA           1330          cmp.l   #170,d5
+000018EC  6D00 0028               1331          blt     GE
+000018F0  BABC 000000FF           1332          cmp.l   #255,d5
+000018F6  6D00 0038               1333          blt     WE
+000018FA                          1334          
+000018FA                          1335  notInGrass:
+000018FA  4E75                    1336          rts
+000018FC                          1337  
+000018FC                          1338  FE:
+000018FC                          1339          * set info for wild BroCmon for fight input
+000018FC  7E01                    1340          move.l  #1,d7
+000018FE                          1341          * display encounter screen
+000018FE  43F9 0004CB8A           1342          lea     f_encount,a1
+00001904  45F9 0006720C           1343          lea     fire,a2
+0000190A  4EB9 00001A60           1344          jsr     encounterScreen
+00001910  4EB8 12C6               1345          jsr     fight
+00001914  4E75                    1346          rts
+00001916                          1347  GE:
+00001916                          1348          * set info for wild BroCmon for fight input
+00001916  7E02                    1349          move.l  #2,d7
+00001918                          1350          * display encounter screen        
+00001918  43F9 00055860           1351          lea     g_encount,a1
+0000191E  45F9 0006E772           1352          lea     grass,a2
+00001924  4EB9 00001A60           1353          jsr     encounterScreen
+0000192A  4EB8 12C6               1354          jsr     fight
+0000192E  4E75                    1355          rts
+00001930                          1356  WE:
+00001930                          1357          * set info for wild BroCmon for fight input
+00001930  7E03                    1358          move.l  #3,d7
+00001932                          1359          * display encounter screen        
+00001932  43F9 0005E536           1360          lea     w_encount,a1
+00001938  45F9 00075CD8           1361          lea     water,a2
+0000193E  4EB9 00001A60           1362          jsr     encounterScreen
+00001944  4EB8 12C6               1363          jsr     fight
+00001948  4E75                    1364          rts                
+0000194A                          1365  getRandom:
+0000194A                          1366          * get time in hundreths of a second since midnight in d1        
+0000194A  7008                    1367          move.l  #GET_TIME,d0
+0000194C  4E4F                    1368          trap    #15
+0000194E                          1369          * shift data back and forth to get higher place digits of time
+0000194E  E189                    1370          lsl.l   #8,d1
+00001950  E189                    1371          lsl.l   #8,d1
+00001952  E989                    1372          lsl.l   #4,d1
+00001954  E089                    1373          lsr.l   #8,d1
+00001956  E089                    1374          lsr.l   #8,d1
+00001958  E089                    1375          lsr.l   #8,d1
+0000195A  2A01                    1376          move.l  d1,d5
+0000195C  4E75                    1377          rts
+0000195E                          1378  encounterFire:
+0000195E  4EB9 00001C0A           1379          jsr     clearScreen
+00001964  41F9 0004CB8A           1380          lea     f_encount,a0
+0000196A  263C 000000C8           1381          move.l  #200,d3     ; bottom left X on screen
+00001970  243C 000000BE           1382          move.l  #190,d2     ; bottom left Y on screen        
+00001976  4EB8 1064               1383          jsr     drawWholeBMP    ; draw the image
+0000197A                          1384          
+0000197A  41F9 0006720C           1385          lea     fire,a0
+00001980  263C 0000010E           1386          move.l  #270,d3     ; bottom left X on screen
+00001986  243C 00000122           1387          move.l  #290,d2     ; bottom left Y on screen        
+0000198C  4EB8 1064               1388          jsr     drawWholeBMP    ; draw the image
+00001990                          1389  
+00001990  41F9 000154EC           1390          lea     r_arrow,a0
+00001996  263C 00000118           1391          move.l  #280,d3     ; bottom left X on screen
+0000199C  243C 00000140           1392          move.l  #320,d2     ; bottom left Y on screen        
+000019A2  4EB8 1064               1393          jsr     drawWholeBMP    ; draw the image
+000019A6                          1394          
+000019A6  4EB9 00001C16           1395          jsr     swapBuffers
+000019AC                          1396  
+000019AC  4EB9 00001C4C           1397          jsr     enterLoop        
+000019B2  4E75                    1398          rts
+000019B4                          1399  encounterGrass:
+000019B4  4EB9 00001C0A           1400          jsr     clearScreen
+000019BA  41F9 00055860           1401          lea     g_encount,a0
+000019C0  263C 000000C8           1402          move.l  #200,d3     ; bottom left X on screen
+000019C6  243C 000000BE           1403          move.l  #190,d2     ; bottom left Y on screen        
+000019CC  4EB8 1064               1404          jsr     drawWholeBMP    ; draw the image
+000019D0                          1405          
+000019D0  41F9 0006E772           1406          lea     grass,a0
+000019D6  263C 0000010E           1407          move.l  #270,d3     ; bottom left X on screen
+000019DC  243C 00000122           1408          move.l  #290,d2     ; bottom left Y on screen        
+000019E2  4EB8 1064               1409          jsr     drawWholeBMP    ; draw the image
+000019E6                          1410  
+000019E6  41F9 000154EC           1411          lea     r_arrow,a0
+000019EC  263C 00000118           1412          move.l  #280,d3     ; bottom left X on screen
+000019F2  243C 00000140           1413          move.l  #320,d2     ; bottom left Y on screen        
+000019F8  4EB8 1064               1414          jsr     drawWholeBMP    ; draw the image
+000019FC                          1415          
+000019FC  4EB9 00001C16           1416          jsr     swapBuffers
+00001A02                          1417  
+00001A02  4EB9 00001C4C           1418          jsr     enterLoop        
+00001A08  4E75                    1419          rts        
+00001A0A                          1420  encounterWater:
+00001A0A  4EB9 00001C0A           1421          jsr     clearScreen
+00001A10  41F9 0005E536           1422          lea     w_encount,a0
+00001A16  263C 000000C8           1423          move.l  #200,d3     ; bottom left X on screen
+00001A1C  243C 000000BE           1424          move.l  #190,d2     ; bottom left Y on screen        
+00001A22  4EB8 1064               1425          jsr     drawWholeBMP    ; draw the image
+00001A26                          1426          
+00001A26  41F9 00075CD8           1427          lea     water,a0
+00001A2C  263C 0000010E           1428          move.l  #270,d3     ; bottom left X on screen
+00001A32  243C 00000122           1429          move.l  #290,d2     ; bottom left Y on screen        
+00001A38  4EB8 1064               1430          jsr     drawWholeBMP    ; draw the image
+00001A3C                          1431  
+00001A3C  41F9 000154EC           1432          lea     r_arrow,a0
+00001A42  263C 00000118           1433          move.l  #280,d3     ; bottom left X on screen
+00001A48  243C 00000140           1434          move.l  #320,d2     ; bottom left Y on screen        
+00001A4E  4EB8 1064               1435          jsr     drawWholeBMP    ; draw the image
+00001A52                          1436          
+00001A52  4EB9 00001C16           1437          jsr     swapBuffers
+00001A58                          1438  
+00001A58  4EB9 00001C4C           1439          jsr     enterLoop        
+00001A5E  4E75                    1440          rts
+00001A60                          1441  encounterScreen:
+00001A60  4EB9 00001C0A           1442          jsr     clearScreen
+00001A66  2049                    1443          move.l  a1,a0
+00001A68  263C 000000C8           1444          move.l  #200,d3     ; bottom left X on screen
+00001A6E  243C 000000BE           1445          move.l  #190,d2     ; bottom left Y on screen        
+00001A74  4EB8 1064               1446          jsr     drawWholeBMP    ; draw the image
+00001A78                          1447          
+00001A78  204A                    1448          move.l  a2,a0
+00001A7A  263C 0000010E           1449          move.l  #270,d3     ; bottom left X on screen
+00001A80  243C 00000122           1450          move.l  #290,d2     ; bottom left Y on screen        
+00001A86  4EB8 1064               1451          jsr     drawWholeBMP    ; draw the image
+00001A8A                          1452  
+00001A8A  41F9 000154EC           1453          lea     r_arrow,a0
+00001A90  263C 00000118           1454          move.l  #280,d3     ; bottom left X on screen
+00001A96  243C 00000140           1455          move.l  #320,d2     ; bottom left Y on screen        
+00001A9C  4EB8 1064               1456          jsr     drawWholeBMP    ; draw the image
+00001AA0                          1457          
+00001AA0  4EB9 00001C16           1458          jsr     swapBuffers
+00001AA6                          1459  
+00001AA6  4EB9 00001C4C           1460          jsr     enterLoop        
+00001AAC  4E75                    1461          rts         
+00001AAE                          1462  
+00001AAE                          1463  
+00001AAE                          1464  
+00001AAE                          1465  
+00001AAE                          1466  
+00001AAE                          1467  
+00001AAE                          1468  
+00001AAE                          1469  
+00001AAE                          1470  
+00001AAE                          1471  
+00001AAE                          1472  
+00001AAE                          1473  
+00001AAE                          1474  
+00001AAE                          1475  
+00001AAE                          1476  
+00001AAE                          1477  
+00001AAE                          1478  
+00001AAE                          1479  
+00001AAE                          1480  
+00001AAE                          1481  
+00001AAE                          1482  
+00001AAE                          1483  
+00001AAE                          1484  
+00001AAE                          1485  
+00001AAE                          1486  
+00001AAE                          1487  
+00001AAE                          1488  
+00001AAE                          1489  
+00001AAE                          1490  
+00001AAE                          1491  
+00001AAE                          1492  
+00001AAE                          1493  
+00001AAE                          1494  
+00001AAE                          1495  
+00001AAE                          1496  
+00001AAE                          1497  
+00001AAE                          1498  
+00001AAE                          1499  
+00001AAE                          1500  
+00001AAE                          1501  
+00001AAE                          1502  
+00001AAE                          1503  
+00001AAE                          1504  
+00001AAE                          1505  
+00001AAE                          1506  
+00001AAE                          1507  
+00001AAE                          1508  
+00001AAE                          1509  
+00001AAE                          1510  
+00001AAE                          1511  
+00001AAE                          1512  
+00001AAE                          1513  
+00001AAE                          1514  
+00001AAE                          1515  
+00001AAE                          1516  
+00001AAE                          1517  
+00001AAE                          1518  
+00001AAE                          1519  
+00001AAE                          1520  
+00001AAE                          1521  
+00001AAE                          1522  
+00001AAE                          1523  
+00001AAE                          1524  
+00001AAE                          1525  
+00001AAE                          1526  
+00001AAE                          1527  
+00001AAE                          1528  
+00001AAE                          1529  
+00001AAE                          1530  
+00001AAE                          1531  
+00001AAE                          1532  
+00001AAE                          1533  
+00001AAE                          1534  
+00001AAE                          1535  
+00001AAE                          1536  
+00001AAE                          1537  
+00001AAE                          1538  -------------------- end include --------------------
+00001AAE                          1539          INCLUDE     "7seg.X68"
+00001AAE  =00296112               1540  CONSOLE_COLOR               EQU $00296112
+00001AAE                          1541  updateHealth:
+00001AAE                          1542  
+00001AAE                          1543          * save off address registers a2 and a3
+00001AAE  43F9 00001D74           1544          lea     addSave,a1
+00001AB4  48D1 0C00               1545          movem.l a2-a3,(a1)
+00001AB8                          1546                 
+00001AB8                          1547          * load in wild health
+00001AB8  43F9 00001D54           1548          lea     wHealth,a1
+00001ABE  2A11                    1549          move.l  (a1),d5        
+00001AC0                          1550          * input the console segment tables and draw the LED
+00001AC0  45F9 0038F00C           1551          lea     WsegL,a2
+00001AC6  47F9 0038F07C           1552          lea     WsegR,a3
+00001ACC  4EB9 00001B66           1553          jsr     updateLEDs
+00001AD2                          1554          
+00001AD2                          1555          * load in player health
+00001AD2  43F9 00001D50           1556          lea     pHealth,a1
+00001AD8  2A11                    1557          move.l  (a1),d5 
+00001ADA                          1558          * input the console segment tables and draw the LED
+00001ADA  45F9 0038F0EC           1559          lea     PsegL,a2
+00001AE0  47F9 0038F15C           1560          lea     PsegR,a3
+00001AE6  4EB9 00001B66           1561          jsr     updateLEDs
+00001AEC                          1562  
+00001AEC                          1563          * put saved registers back
+00001AEC  43F9 00001D74           1564          lea     addSave,a1
+00001AF2  4CD1 0C00               1565          movem.l (a1),a2-a3         
+00001AF6  4E75                    1566          rts
+00001AF8                          1567  updateConsole:        
+00001AF8                          1568  
+00001AF8                          1569          * save off address registers a2 and a3
+00001AF8  43F9 00001D74           1570          lea     addSave,a1
+00001AFE  48D1 0C00               1571          movem.l a2-a3,(a1)
+00001B02                          1572          
+00001B02                          1573          * input the console segment tables and draw the LED
+00001B02  45F9 0038EF2C           1574          lea     segTabL,a2
+00001B08  47F9 0038EF9C           1575          lea     segTabR,a3
+00001B0E  4EB9 00001B66           1576          jsr     updateLEDs
+00001B14                          1577          
+00001B14                          1578          * put saved registers back
+00001B14  43F9 00001D74           1579          lea     addSave,a1
+00001B1A  4CD1 0C00               1580          movem.l (a1),a2-a3        
+00001B1E  4E75                    1581          rts
+00001B20                          1582  redrawConsole:
+00001B20                          1583  
+00001B20                          1584          * save off registers
+00001B20  43F9 00001D7C           1585          lea     ledSave,a1
+00001B26  48D1 00FE               1586          movem.l d1-d7,(a1)
+00001B2A                          1587  
+00001B2A                          1588          * set pen color
+00001B2A  223C 00296112           1589          move.l  #CONSOLE_COLOR,d1
+00001B30  7050                    1590          move.l  #PEN_COLOR,d0
+00001B32  4E4F                    1591          trap    #15
+00001B34                          1592          
+00001B34                          1593          * set fill color
+00001B34  223C 00296112           1594          move.l  #CONSOLE_COLOR,d1
+00001B3A  7051                    1595          move.l  #FILL_COLOR,d0
+00001B3C  4E4F                    1596          trap    #15
+00001B3E                          1597          
+00001B3E                          1598          * move in the coordinates
+00001B3E  223C 00000110           1599          move.l  #272,d1
+00001B44  243C 0000017E           1600          move.l  #382,d2
+00001B4A  263C 00000170           1601          move.l  #368,d3
+00001B50  283C 000001DE           1602          move.l  #478,d4
+00001B56                          1603          
+00001B56                          1604          * draw the rectangle                
+00001B56  7057                    1605          move.l  #RECT,d0
+00001B58  4E4F                    1606          trap    #15
+00001B5A                          1607          
+00001B5A                          1608          * move saved registers back in
+00001B5A  43F9 00001D7C           1609          lea     ledSave,a1
+00001B60  4CD1 00FE               1610          movem.l (a1),d1-d7 
+00001B64                          1611          
+00001B64  4E75                    1612          rts
+00001B66                          1613  updateLEDs:
+00001B66                          1614  
+00001B66                          1615          * save off registers
+00001B66  43F9 00001D7C           1616          lea     ledSave,a1
+00001B6C  48D1 00FE               1617          movem.l d1-d7,(a1)
+00001B70                          1618          
+00001B70                          1619          * set pen color
+00001B70  223C 002EDCFF           1620          move.l  #LED_COLOR,d1
+00001B76  7050                    1621          move.l  #PEN_COLOR,d0
+00001B78  4E4F                    1622          trap    #15
+00001B7A                          1623          
+00001B7A                          1624          * set fill color
+00001B7A  223C 002EDCFF           1625          move.l  #LED_COLOR,d1
+00001B80  7051                    1626          move.l  #FILL_COLOR,d0
+00001B82  4E4F                    1627          trap    #15
+00001B84                          1628          
+00001B84                          1629          * check if we need to split the damage into 10s and 1s places
+00001B84  4286                    1630          clr.l   d6              ; clear out 10s place counter
+00001B86  BABC 0000000A           1631          cmp.l   #10,d5          ; check if >10 so if we need to split
+00001B8C  6D00 0012               1632          blt     nosplit
+00001B90                          1633  
+00001B90                          1634  splitLoop:
+00001B90  0485 0000000A           1635          subi.l  #10,d5          ; subtract 10 from damage
+00001B96  5286                    1636          add.l   #1,d6           ; increase 10s place counter
+00001B98  BABC 0000000A           1637          cmp.l   #10,d5
+00001B9E  6CF0                    1638          bge     splitLoop       ; keep going if still over 10               
+00001BA0                          1639          
+00001BA0                          1640  nosplit:
+00001BA0                          1641          
+00001BA0                          1642          * 10s digit
+00001BA0  224A                    1643          move.l  a2,a1
+00001BA2  2806                    1644          move.l  d6,d4           ; move digit to display in
+00001BA4  4EB9 00001BC6           1645          jsr     draw7seg
+00001BAA                          1646          * 1s digit
+00001BAA  224B                    1647          move.l  a3,a1
+00001BAC  2805                    1648          move.l  d5,d4           ; move digit to display in
+00001BAE  4EB9 00001BC6           1649          jsr     draw7seg
+00001BB4                          1650          
+00001BB4                          1651          * move saved registers back in
+00001BB4  43F9 00001D7C           1652          lea     ledSave,a1
+00001BBA  4CD1 00FE               1653          movem.l (a1),d1-d7  
+00001BBE                          1654          
+00001BBE  4EB9 00001C16           1655          jsr     swapBuffers
+00001BC4  4E75                    1656          rts
+00001BC6                          1657  draw7seg:
+00001BC6                          1658  
+00001BC6                          1659          * save off d5
+00001BC6  45F9 00001D98           1660          lea     inSave,a2
+00001BCC  48D2 0020               1661          movem.l d5,(a2)
+00001BD0                          1662          
+00001BD0                          1663          * get proper bitmask
+00001BD0  41F9 0038F1CC           1664          lea     maskTab,a0
+00001BD6  D1C4                    1665          add.l   d4,a0           ; move mask pointer to proper digit
+00001BD8                          1666          
+00001BD8  1C10                    1667          move.b  (a0),d6
+00001BDA  7A06                    1668          move.l  #6,d5           ; set bit counter at 6
+00001BDC  7E07                    1669          move.l  #7,d7           ; set loop counter at 8
+00001BDE                          1670  loopin:
+00001BDE                          1671  
+00001BDE  0B06                    1672          btst    d5,d6           ; test the bit to see if it's 1
+00001BE0  6700 0018               1673          beq     nope            ; branch ahead if no segment needed
+00001BE4                          1674  
+00001BE4                          1675          * draw appropriate segments
+00001BE4  2219                    1676          move.l  (a1)+,d1
+00001BE6  2419                    1677          move.l  (a1)+,d2
+00001BE8  2619                    1678          move.l  (a1)+,d3
+00001BEA  2819                    1679          move.l  (a1)+,d4
+00001BEC                          1680          
+00001BEC  7057                    1681          move.l  #RECT,d0
+00001BEE  4E4F                    1682          trap    #15
+00001BF0                          1683  
+00001BF0  5385                    1684          subi.l  #1,d5           ; decrement bit counter
+00001BF2  5387                    1685          subi.l  #1,d7           ; decrement loop counter
+00001BF4  66E8                    1686          bne     loopin    
+00001BF6                          1687  
+00001BF6                          1688          * get saved mem back
+00001BF6  2A12                    1689          move.l  (a2),d5   
+00001BF8  4E75                    1690          rts
+00001BFA                          1691  
+00001BFA                          1692  nope:
+00001BFA  D3FC 00000010           1693          add.l   #16,a1          ; skip over unused segment data
+00001C00  5385                    1694          subi.l  #1,d5           ; decrement bit counter
+00001C02  5387                    1695          subi.l  #1,d7           ; decrement loop counter
+00001C04  66D8                    1696          bne     loopin
+00001C06                          1697          
+00001C06                          1698          * get saved mem back
+00001C06  2A12                    1699          move.l  (a2),d5         
+00001C08  4E75                    1700          rts
+00001C0A                          1701  
+00001C0A                          1702  
+00001C0A                          1703  
+00001C0A                          1704  
+00001C0A                          1705  
+00001C0A                          1706  
+00001C0A                          1707  
+00001C0A                          1708  
+00001C0A                          1709  
+00001C0A                          1710  
+00001C0A                          1711  
+00001C0A                          1712  
+00001C0A                          1713  
+00001C0A                          1714  
+00001C0A                          1715  
+00001C0A                          1716  
+00001C0A                          1717  
+00001C0A                          1718  
+00001C0A                          1719  
+00001C0A                          1720  
+00001C0A                          1721  
+00001C0A                          1722  
+00001C0A                          1723  
+00001C0A                          1724  
+00001C0A                          1725  
+00001C0A                          1726  
+00001C0A                          1727  
+00001C0A                          1728  
+00001C0A                          1729  
+00001C0A                          1730  
+00001C0A                          1731  
+00001C0A                          1732  
+00001C0A                          1733  
+00001C0A                          1734  
+00001C0A                          1735  
+00001C0A                          1736  
+00001C0A                          1737  
+00001C0A                          1738  
+00001C0A                          1739  
+00001C0A                          1740  
+00001C0A                          1741  
+00001C0A                          1742  
+00001C0A                          1743  
+00001C0A                          1744  
+00001C0A                          1745  
+00001C0A                          1746  
+00001C0A                          1747  
+00001C0A                          1748  
+00001C0A                          1749  
+00001C0A                          1750  
+00001C0A                          1751  
+00001C0A                          1752  
+00001C0A                          1753  
+00001C0A                          1754  
+00001C0A                          1755  
+00001C0A                          1756  
+00001C0A                          1757  
+00001C0A                          1758  
+00001C0A                          1759  
+00001C0A                          1760  
+00001C0A                          1761  
+00001C0A                          1762  
+00001C0A                          1763  
+00001C0A                          1764  
+00001C0A                          1765  
+00001C0A                          1766  
+00001C0A                          1767  
+00001C0A                          1768  
+00001C0A                          1769  
+00001C0A                          1770  
+00001C0A                          1771  
+00001C0A                          1772  
+00001C0A                          1773  
+00001C0A                          1774  
+00001C0A                          1775  
+00001C0A                          1776  
+00001C0A                          1777  
+00001C0A                          1778  
+00001C0A                          1779  
+00001C0A                          1780  
+00001C0A                          1781  
+00001C0A                          1782  
+00001C0A                          1783  
+00001C0A                          1784  
+00001C0A                          1785  
+00001C0A                          1786  
+00001C0A                          1787  
+00001C0A                          1788  
+00001C0A                          1789  
+00001C0A                          1790  
+00001C0A                          1791  
+00001C0A                          1792  
+00001C0A                          1793  
+00001C0A                          1794  
+00001C0A                          1795  
+00001C0A                          1796  
+00001C0A                          1797  
+00001C0A                          1798  
+00001C0A                          1799  
+00001C0A                          1800  
+00001C0A                          1801  
+00001C0A                          1802  
+00001C0A                          1803  
+00001C0A                          1804  
+00001C0A                          1805  
+00001C0A                          1806  
+00001C0A                          1807  -------------------- end include --------------------
+00001C0A                          1808  *-----------------------------------------------------------        
+00001C0A                          1809  clearScreen:
+00001C0A                          1810  * clears entire screen
+00001C0A  700B                    1811          move.l  #CLEAR_SCREEN,d0
+00001C0C  223C 0000FF00           1812          move.l  #CLEAR_SCREEN_MAGIC_VAL,d1
+00001C12  4E4F                    1813          TRAP    #15
+00001C14  4E75                    1814          rts
+00001C16                          1815  *-----------------------------------------------------------
+00001C16                          1816  swapBuffers:
+00001C16                          1817  * swaps hidden screen to front
+00001C16  705E                    1818          move.l  #REPAINT_SCREEN,d0
+00001C18  4E4F                    1819          trap    #15
+00001C1A  4E75                    1820          rts
+00001C1C                          1821  *-----------------------------------------------------------        
+00001C1C                          1822  checkKeyDown:
+00001C1C                          1823  * returns what key was pressed in lower word of d1
+00001C1C  4281                    1824          clr.l   d1
+00001C1E  7013                    1825          move.l  #KEY_STATE,d0
+00001C20  4E4F                    1826          trap    #15     
+00001C22  4E75                    1827          rts
+00001C24                          1828  *-----------------------------------------------------------        
+00001C24                          1829  checkKeyUp:
+00001C24                          1830  * returns what key was up in lower word of d1        
+00001C24  4281                    1831          clr.l   d1
+00001C26  7013                    1832          move.l  #KEY_STATE,d0
+00001C28  4E4F                    1833          trap    #15     
+00001C2A  4841                    1834          swap    d1
+00001C2C  4E75                    1835          rts
+00001C2E                          1836  *-----------------------------------------------------------        
+00001C2E                          1837  checkKeyPress:
+00001C2E                          1838  * returns if an arrow key is being pressed
+00001C2E  7013                    1839          move.l  #KEY_STATE,d0
+00001C30  4281                    1840          clr.l   d1
+00001C32  123C 0025               1841          move.b  #LEFT_ARROW,d1
+00001C36  E189                    1842          lsl.l   #8,d1
+00001C38  123C 0027               1843          move.b  #RIGHT_ARROW,d1
+00001C3C  E189                    1844          lsl.l   #8,d1
+00001C3E  123C 0026               1845          move.b  #UP_ARROW,d1
+00001C42  E189                    1846          lsl.l   #8,d1
+00001C44  123C 0028               1847          move.b  #DOWN_ARROW,d1
+00001C48  4E4F                    1848          trap    #15
+00001C4A  4E75                    1849          rts
+00001C4C                          1850  *-----------------------------------------------------------        
+00001C4C                          1851  enterLoop:
+00001C4C                          1852  * waits for player to hit enter, then quits loop
+00001C4C  4EB8 1C1C               1853          jsr     checkKeyDown
+00001C50  B23C 000D               1854          cmp.b   #ENTER,d1
+00001C54  66F6                    1855          bne     enterLoop
+00001C56  4E75                    1856          rts
+00001C58                          1857  *-----------------------------------------------------------
+00001C58                          1858  checkInventory:
+00001C58                          1859  * checks to see if all BroCmon have been obtained
+00001C58                          1860  * passes 1 into d7 if they have
+00001C58  41F9 00001D48           1861          lea     inventory,a0
+00001C5E  2810                    1862          move.l  (a0),d4
+00001C60  0804 0018               1863          btst    #24,d4
+00001C64  6600 0004               1864          bne     haveF         ; branch ahead if they have fire
+00001C68  4E75                    1865          rts
+00001C6A                          1866  haveF:    
+00001C6A  0804 0010               1867          btst    #16,d4        
+00001C6E  6600 0004               1868          bne     haveG         ; branch ahead if they have grass
+00001C72  4E75                    1869          rts
+00001C74                          1870  haveG:
+00001C74  0804 0008               1871          btst    #8,d4
+00001C78  6600 0004               1872          bne     haveW         ; branch ahead if they have water
+00001C7C  4E75                    1873          rts
+00001C7E                          1874  haveW:
+00001C7E  7E01                    1875          move.l  #1,d7
+00001C80  4E75                    1876          rts    
+00001C82                          1877  *-----------------------------------------------------------    
+00001C82                          1878  winScreen:
+00001C82                          1879  * shows the winner screen
+00001C82  4EB8 1C0A               1880          jsr     clearScreen
+00001C86  41F9 0037F8DE           1881          lea     winner,a0  ; load in the image        
+00001C8C  263C 000000B4           1882          move.l  #180,d3     ; bottom left X on screen
+00001C92  243C 00000116           1883          move.l  #278,d2     ; bottom left Y on screen
+00001C98                          1884          
+00001C98  4EB8 1064               1885          jsr     drawWholeBMP    ; draw the image
+00001C9C  4EB8 1C16               1886          jsr     swapBuffers        
+00001CA0  FFFF FFFF               1887          SIMHALT             ; halt simulator
+00001CA4                          1888  *-----------------------------------------------------------    
+00001CA4                          1889  initOutside:
+00001CA4                          1890  * loads the outside background with player in starting location
+00001CA4                          1891  * puts starting coords in d6/d7
+00001CA4  4EB9 00001D1C           1892          jsr     drawIsland      ; draw the background
+00001CAA                          1893          * set initial player location
+00001CAA  7C64                    1894          move.l  #PLAYER_START_X,d6
+00001CAC  2E3C 0000017C           1895          move.l  #PLAYER_START_Y,d7 
+00001CB2  4EB9 00001D34           1896          jsr     drawPlayer      ; draw the player
+00001CB8  4EB8 1C16               1897          jsr     swapBuffers       
+00001CBC  4E75                    1898          rts
+00001CBE                          1899  *-----------------------------------------------------------        
+00001CBE                          1900  drawLoad:
+00001CBE                          1901  * draws the loading icon to the screen
+00001CBE  4EB8 1C0A               1902          jsr     clearScreen
+00001CC2  41F9 00001DF4           1903          lea     loading,a0  ; load in the image
+00001CC8  263C 0000010E           1904          move.l  #270,d3     ; bottom left X on screen
+00001CCE  243C 000000E3           1905          move.l  #227,d2     ; bottom left Y on screen
+00001CD4                          1906          
+00001CD4  4EB8 1064               1907          jsr     drawWholeBMP    ; draw the image
+00001CD8  4EB8 1C16               1908          jsr     swapBuffers
+00001CDC  4E75                    1909          rts
+00001CDE                          1910  *-----------------------------------------------------------        
+00001CDE                          1911  drawLogo:
+00001CDE                          1912  * draws the logo to the screen
+00001CDE  4EB8 1C0A               1913          jsr     clearScreen
+00001CE2  41F9 00003B76           1914          lea     logo,a0     ; load in the image
+00001CE8  263C 000000C8           1915          move.l  #200,d3     ; bottom left X on screen
+00001CEE  243C 00000104           1916          move.l  #260,d2     ; bottom left Y on screen
+00001CF4                          1917          
+00001CF4  4EB8 1064               1918          jsr     drawWholeBMP    ; draw the image
+00001CF8  4EB9 00001D04           1919          jsr     drawEnter       ; draw instruction underneath
+00001CFE  4EB8 1C16               1920          jsr     swapBuffers
+00001D02  4E75                    1921          rts
+00001D04                          1922  *-----------------------------------------------------------        
+00001D04                          1923  drawEnter:
+00001D04                          1924  * draws the right arrow symbol to screen
+00001D04  41F9 000154EC           1925          lea     r_arrow,a0  ; load in the image
+00001D0A  263C 00000104           1926          move.l  #260,d3     ; bottom left X on screen
+00001D10  243C 00000118           1927          move.l  #280,d2     ; bottom left Y on screen
+00001D16                          1928          
+00001D16  4EB8 1064               1929          jsr     drawWholeBMP    ; draw the image
+00001D1A  4E75                    1930          rts
+00001D1C                          1931  *-----------------------------------------------------------        
+00001D1C                          1932  drawIsland:
+00001D1C                          1933  * draws the outside to the screen
+00001D1C  4EB8 1C0A               1934          jsr     clearScreen
+00001D20  41F9 000DC386           1935          lea     island,a0   ; load in the image
+00001D26  7600                    1936          move.l  #0,d3       ; bottom left X on screen
+00001D28  243C 000001E0           1937          move.l  #480,d2     ; bottom left Y on screen
+00001D2E                          1938          
+00001D2E  4EB8 1064               1939          jsr     drawWholeBMP    ; draw the image
+00001D32  4E75                    1940          rts
+00001D34                          1941  *-----------------------------------------------------------        
+00001D34                          1942  drawPlayer:
+00001D34                          1943  * draws the player's movement
+00001D34  41F9 0037ECA8           1944          lea     player1,a0  ; load in the image
+00001D3A  2606                    1945          move.l  d6,d3     ; bottom left X on screen
+00001D3C  2407                    1946          move.l  d7,d2     ; bottom left Y on screen
+00001D3E                          1947          
+00001D3E  4EB8 1064               1948          jsr     drawWholeBMP    ; draw the image
+00001D42  4E75                    1949          rts
+00001D44                          1950  *-----------------------------------------------------------        
+00001D44                          1951          * program shouldn't reach this far but it does, halt sim
+00001D44  FFFF FFFF               1952          SIMHALT
+00001D48                          1953  
+00001D48                          1954  *-----------------------------------------------------------
+00001D48                          1955  *                         POINTERS        
+00001D48                          1956  *-----------------------------------------------------------
+00001D48                          1957  * declared memory
+00001D48                          1958  * game info
+00001D48= 00000000                1959  inventory   dc.l    0   ; value determines the BroCmon player has
+00001D4C= 00000014                1960  tmr         dc.l    20  ; how many frames in grass before encounter
+00001D50                          1961  pHealth     ds.l    1   ; player's brocmon health
+00001D54                          1962  wHealth     ds.l    1   ; wild brocmon health
+00001D58                          1963  dam         ds.l    1   ; damage amount
+00001D5C                          1964  * saved registers
+00001D5C                          1965  eSave       ds.l    1   ; holds which wild brocmon is being fought
+00001D60                          1966  fSave       ds.l    5   ; where to save register when fighting
+00001D74                          1967  addSave     ds.l    2   ; holds two addresses
+00001D7C                          1968  ledSave     ds.l    7   ; where to save during led draw
+00001D98                          1969  inSave      ds.l    1   ; holds damage during led draw
+00001D9C                          1970  bmpSave     ds.l    11  ; where to save register when drawing whole bmp  
+00001DC8                          1971  chunkSave   ds.l    11   ; where to save register when drawing bmp chunk 
+00001DF4                          1972  * art asset pointers
+00001DF4                          1973  loading:    INCBIN  "loading.bmp"
+00003B76                          1974  logo:       INCBIN  "logo.bmp"
+000154EC                          1975  r_arrow:    INCBIN  "right_arrow.bmp"
+000167E2                          1976  u_turn      INCBIN  "Uturn.bmp"
+00018564                          1977  t_turn      INCBIN  "Tturn.bmp"
+0001A66A                          1978  choose      INCBIN  "choose.bmp"
+0001FE84                          1979  versus      INCBIN  "versus.bmp"
+00022EBA                          1980  fainted:    INCBIN  "fainted.bmp"
+0002DEB8                          1981  f_congrats: INCBIN  "Fcongrats.bmp"
+000382FE                          1982  g_congrats: INCBIN  "Gcongrats.bmp"
+00042744                          1983  w_congrats: INCBIN  "Wcongrats.bmp"
+0004CB8A                          1984  f_encount:  INCBIN  "Fencounter.bmp"
+00055860                          1985  g_encount:  INCBIN  "Gencounter.bmp"
+0005E536                          1986  w_encount:  INCBIN  "Wencounter.bmp"
+0006720C                          1987  fire:       INCBIN  "cyndaquil.bmp"
+0006E772                          1988  grass:      INCBIN  "chicorita.bmp"
+00075CD8                          1989  water:      INCBIN  "totodile.bmp"
+0007D23E                          1990  f_option:   INCBIN  "cyndaquil_option.bmp"
+00086D24                          1991  g_option:   INCBIN  "chicorita_option.bmp"
+0009080A                          1992  w_option:   INCBIN  "totodile_option.bmp"
+0009A2F0                          1993  d_cyn       INCBIN  "Dcyndaquil.bmp"
+000A1856                          1994  d_chi       INCBIN  "Dchicorita.bmp"
+000A8DBC                          1995  d_tot       INCBIN  "Dtotodile.bmp"
+000B0322                          1996  ar_cyn      INCBIN  "ARcyndaquil.bmp"
+000B7888                          1997  ar_chi      INCBIN  "ARchicorita.bmp"
+000BEDEE                          1998  ar_tot      INCBIN  "ARtotodile.bmp"
+000C6354                          1999  al_cyn      INCBIN  "ALcyndaquil.bmp"
+000CD8BA                          2000  al_chi      INCBIN  "ALchicorita.bmp"
+000D4E20                          2001  al_tot      INCBIN  "ALtotodile.bmp"
+000DC386                          2002  island:     INCBIN  "island.bmp"
+001BD3BC                          2003  d_field:    INCBIN  "d_field.bmp"
+0029E3F2                          2004  a_field:    INCBIN  "a_field.bmp"
+0037ECA8                          2005  player1:    INCBIN  "player1.bmp"
+0037F8DE                          2006  winner:     INCBIN  "winner.bmp"
+0038EF2C                          2007  * segment tables (A-G)
+0038EF2C                          2008  * console segments
+0038EF2C                          2009  segTabL
+0038EF2C= 00000118 00000186 ...   2010  A           dc.l    280,390,315,400
+0038EF3C= 00000131 00000186 ...   2011  B           dc.l    305,390,315,430
+0038EF4C= 00000131 000001AE ...   2012  C           dc.l    305,430,315,470
+0038EF5C= 00000118 000001CC ...   2013  D           dc.l    280,460,315,470
+0038EF6C= 00000118 000001AE ...   2014  E           dc.l    280,430,290,470
+0038EF7C= 00000118 00000186 ...   2015  F           dc.l    280,390,290,430
+0038EF8C= 00000118 000001A9 ...   2016  G           dc.l    280,425,315,435
+0038EF9C                          2017  segTabR        
+0038EF9C= 00000145 00000186 ...   2018  AR          dc.l    325,390,360,400
+0038EFAC= 0000015E 00000186 ...   2019  BR          dc.l    350,390,360,430
+0038EFBC= 0000015E 000001AE ...   2020  CR          dc.l    350,430,360,470
+0038EFCC= 00000145 000001CC ...   2021  DR          dc.l    325,460,360,470
+0038EFDC= 00000145 000001AE ...   2022  ER          dc.l    325,430,335,470
+0038EFEC= 00000145 00000186 ...   2023  FR          dc.l    325,390,335,430
+0038EFFC= 00000145 000001A9 ...   2024  GR          dc.l    325,425,360,435
+0038F00C                          2025  * wild BroCmon segments
+0038F00C                          2026  WsegL
+0038F00C= 0000004B 00000186 ...   2027  WA           dc.l   75,390,110,400
+0038F01C= 00000064 00000186 ...   2028  WB           dc.l   100,390,110,430
+0038F02C= 00000064 000001AE ...   2029  WC           dc.l   100,430,110,470
+0038F03C= 0000004B 000001CC ...   2030  WD           dc.l   75,460,110,470
+0038F04C= 0000004B 000001AE ...   2031  WilE         dc.l   75,430,85,470
+0038F05C= 0000004B 00000186 ...   2032  WF           dc.l   75,390,85,430
+0038F06C= 0000004B 000001A9 ...   2033  WG           dc.l   75,425,110,435
+0038F07C                          2034  WsegR        
+0038F07C= 00000078 00000186 ...   2035  WAR          dc.l   120,390,155,400
+0038F08C= 00000091 00000186 ...   2036  WBR          dc.l   145,390,155,430
+0038F09C= 00000091 000001AE ...   2037  WCR          dc.l   145,430,155,470
+0038F0AC= 00000078 000001CC ...   2038  WDR          dc.l   120,460,155,470
+0038F0BC= 00000078 000001AE ...   2039  WER          dc.l   120,430,130,470
+0038F0CC= 00000078 00000186 ...   2040  WFR          dc.l   120,390,130,430
+0038F0DC= 00000078 000001A9 ...   2041  WGR          dc.l   120,425,155,435
+0038F0EC                          2042  * player's (ally) BroCmon segments
+0038F0EC                          2043  PsegL
+0038F0EC= 000001E5 00000186 ...   2044  PA           dc.l   485,390,520,400
+0038F0FC= 000001FE 00000186 ...   2045  PB           dc.l   510,390,520,430
+0038F10C= 000001FE 000001AE ...   2046  PC           dc.l   510,430,520,470
+0038F11C= 000001E5 000001CC ...   2047  PD           dc.l   485,460,520,470
+0038F12C= 000001E5 000001AE ...   2048  PE           dc.l   485,430,495,470
+0038F13C= 000001E5 00000186 ...   2049  PF           dc.l   485,390,495,430
+0038F14C= 000001E5 000001A9 ...   2050  PG           dc.l   485,425,520,435
+0038F15C                          2051  PsegR        
+0038F15C= 00000212 00000186 ...   2052  PAR          dc.l   530,390,565,400
+0038F16C= 0000022B 00000186 ...   2053  PBR          dc.l   555,390,565,430
+0038F17C= 0000022B 000001AE ...   2054  PCR          dc.l   555,430,565,470
+0038F18C= 00000212 000001CC ...   2055  PDR          dc.l   530,460,565,470
+0038F19C= 00000212 000001AE ...   2056  PER          dc.l   530,430,540,470
+0038F1AC= 00000212 00000186 ...   2057  PFR          dc.l   530,390,540,430
+0038F1BC= 00000212 000001A9 ...   2058  PGR          dc.l   530,425,565,435
+0038F1CC                          2059  * bitmask table (0-9)
+0038F1CC                          2060  maskTab
+0038F1CC= 7E 30 6D 79 33 5B ...   2061              dc.b    126,48,109,121,51,91,95,112,127,115  
+0038F1D6                          2062              
+0038F1D6                          2063          END    START
+
+No errors detected
+No warnings generated
+
+
+SYMBOL TABLE INFORMATION
+Symbol-name         Value
+-------------------------
+A                   38EF2C
+ADDSAVE             1D74
+AGRASS              14D2
+ALL_REG             7FFF
+AL_CHI              CD8BA
+AL_CYN              C6354
+AL_TOT              D4E20
+AR                  38EF9C
+AR_CHI              B7888
+AR_CYN              B0322
+AR_TOT              BEDEE
+ASSIGNDAMAGE        14A2
+ATTACKLOOP          1420
+AWATER              14FA
+A_FIELD             29E3F2
+A_SCREEN            1754
+B                   38EF3C
+BEGINA              1402
+BEGIND              139A
+BMPSAVE             1D9C
+BR                  38EFAC
+C                   38EF4C
+CAPNOTF             147C
+CAPNOTG             1488
+CAPNOTW             1494
+CAPTURE             1468
+CHECKINVENTORY      1C58
+CHECKKEYDOWN        1C1C
+CHECKKEYPRESS       1C2E
+CHECKKEYUP          1C24
+CHOOSE              1A66A
+CHOOSEFIGHTER       116E
+CHOOSESTARTER       1148
+CHUNKSAVE           1DC8
+CLEARSCREEN         1C0A
+CLEAR_SCREEN        B
+CLEAR_SCREEN_MAGIC_VAL  FF00
+CONSOLE_COLOR       296112
+CONT                155A
+CONTI               158C
+CR                  38EFBC
+D                   38EF5C
+DAM                 1D58
+DAMAGE_A            1E
+DAMAGE_D            A
+DAMAGE_N            14
+DEAD                1498
+DECCELERATE         1528
+DEFENDLOOP          13BA
+DELAY_FRAME         17
+DISPLAYLOOP         1108
+DONTMOVE            1884
+DOUBLE_BUFFERED_MODE  11
+DOWN                1876
+DOWN_ARROW          28
+DR                  38EFCC
+DRAW24LOOP          1098
+DRAW7SEG            1BC6
+DRAWBMPCHUNK        10D0
+DRAWENTER           1D04
+DRAWFAINT           1796
+DRAWFIELDCHUNK      150A
+DRAWFOPTION         127E
+DRAWGOPTION         1296
+DRAWING_MODE        5C
+DRAWISLAND          1D1C
+DRAWLOAD            1CBE
+DRAWLOGO            1CDE
+DRAWPLAYER          1D34
+DRAWPROJ            15AA
+DRAWTHEIRTURN       1690
+DRAWWHOLEBMP        1064
+DRAWWOPTION         12AE
+DRAWYOURTURN        166C
+DRAW_PIXEL          52
+D_CHI               A1856
+D_CYN               9A2F0
+D_FIELD             1BD3BC
+D_SCREEN            1712
+D_TOT               A8DBC
+E                   38EF6C
+ENCOUNTER           1896
+ENCOUNTERFIRE       195E
+ENCOUNTERGRASS      19B4
+ENCOUNTERSCREEN     1A60
+ENCOUNTERWATER      1A0A
+ENTER               D
+ENTERLOOP           1C4C
+ER                  38EFDC
+ESAVE               1D5C
+F                   38EF7C
+FAINTED             22EBA
+FE                  18FC
+FFIGHTER            11E8
+FIGHT               12C6
+FIGHTERLOOP         11C2
+FILL_COLOR          51
+FIRE                6720C
+FR                  38EFEC
+FRAME_DELAY_TIME    1
+FSAVE               1D60
+FSTARTER            123A
+F_CONGRATS          2DEB8
+F_ENCOUNT           4CB8A
+F_OPTION            7D23E
+G                   38EF8C
+GAMESTART           1006
+GE                  1916
+GETRANDOM           194A
+GET_TIME            8
+GFIGHTER            11DE
+GR                  38EFFC
+GRASS               6E772
+GRASS_B_EDGE        FA
+GRASS_L_EDGE        96
+GRASS_R_EDGE        15E
+GRASS_T_EDGE        82
+GREENSCREEN         10BC
+GSTARTER            1218
+G_CONGRATS          382FE
+G_ENCOUNT           55860
+G_OPTION            86D24
+HAVEF               1C6A
+HAVEG               1C74
+HAVEW               1C7E
+HEALTH              1E
+INIT                101E
+INITOUTSIDE         1CA4
+INSAVE              1D98
+INVENTORY           1D48
+ISLAND              DC386
+ISLAND_B_EDGE       17C
+ISLAND_L_EDGE       64
+ISLAND_R_EDGE       21C
+ISLAND_T_EDGE       64
+ITSTIME             18D0
+KEEP                1664
+KEEPIT              1624
+KEY_STATE           13
+LEDSAVE             1D7C
+LED_COLOR           2EDCFF
+LEFT                184C
+LEFT_ARROW          25
+LOADING             1DF4
+LOGO                3B76
+LOOPIN              1BDE
+MASKTAB             38F1CC
+NODECCEL            1542
+NOF                 11A0
+NOG                 11AE
+NOPE                1BFA
+NOPRES              1668
+NOPRESS             1628
+NOSPLIT             1BA0
+NOTINGRASS          18FA
+NOW                 11BC
+OBTAINSCREEN        17D6
+OUTSIDELOOP         102A
+PA                  38F0EC
+PAR                 38F15C
+PB                  38F0FC
+PBR                 38F16C
+PC                  38F10C
+PCR                 38F17C
+PD                  38F11C
+PDR                 38F18C
+PE                  38F12C
+PEN_COLOR           50
+PER                 38F19C
+PF                  38F13C
+PFR                 38F1AC
+PG                  38F14C
+PGR                 38F1BC
+PHEALTH             1D50
+PLAYATT             162C
+PLAYDEF             15EC
+PLAYER1             37ECA8
+PLAYER_HEIGHT       20
+PLAYER_START_X      64
+PLAYER_START_Y      17C
+PLAYER_VELOCITY     2
+PLAYER_WIDTH        20
+PROJ_A              1
+PROJ_COLOR          1515E6
+PROJ_HEIGHT         20
+PROJ_V              8
+PROJ_WIDTH          20
+PSEGL               38F0EC
+PSEGR               38F15C
+RECT                57
+REDRAWCONSOLE       1B20
+REDRAWISLANDCHUNK   1886
+REPAINT_SCREEN      5E
+RIGHT               185A
+RIGHT_ARROW         27
+R_ARROW             154EC
+SAVED_CHUNK_REG     F
+SAVED_REG           7CF3
+SCREEN_HEIGHT       1E0
+SCREEN_WIDTH        280
+SEGTABL             38EF2C
+SEGTABR             38EF9C
+SELECTION           11FC
+SPLITLOOP           1B90
+START               1000
+SWAPBUFFERS         1C16
+TMR                 1D4C
+TWINS               1502
+T_TURN              18564
+UP                  1868
+UPDATEALLY          1576
+UPDATECONSOLE       1AF8
+UPDATEHEALTH        1AAE
+UPDATELEDS          1B66
+UPDATEPLAYER        1824
+UPDATEWILD          1544
+UP_ARROW            26
+USERNOTF            12EA
+USERNOTG            1304
+USERNOTW            131E
+U_TURN              167E2
+VERSUS              1FE84
+VSSCREEN            16B4
+WA                  38F00C
+WAR                 38F07C
+WATER               75CD8
+WB                  38F01C
+WBR                 38F08C
+WC                  38F02C
+WCR                 38F09C
+WD                  38F03C
+WDR                 38F0AC
+WE                  1930
+WER                 38F0BC
+WF                  38F05C
+WFIGHTER            11F2
+WFIRE               14EA
+WFR                 38F0CC
+WG                  38F06C
+WGR                 38F0DC
+WHEALTH             1D54
+WILDGREATT          14B2
+WILDLESST           14DA
+WILDNOTF            1338
+WILDNOTG            1352
+WILDNOTW            136C
+WILE                38F04C
+WINNER              37F8DE
+WINSCREEN           1C82
+WSEGL               38F00C
+WSEGR               38F07C
+WSTARTER            125C
+WWATER              14C2
+W_CONGRATS          42744
+W_ENCOUNT           5E536
+W_OPTION            9080A
